@@ -146,15 +146,113 @@ export default {
     try {
       buildConfig(env);
     } catch (e) {
-      return new Response(
-        `goindex configuration error\n\n${e.message}\n\n` +
-          `See the README for the full list of env bindings.`,
-        { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } },
-      );
+      // Missing / malformed bindings — instead of 500ing every visit
+      // (and burning the operator's dashboard with error rows), serve
+      // a "configure me" page that explains exactly what to add.
+      // Uses the r_notification.js popup library if reachable; falls
+      // back to a styled inline panel so the site still reads well
+      // when the CDN is blocked or offline.
+      return new Response(unconfiguredHtml(e.message), {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
     }
     return handleRequest(request);
   },
 };
+
+// ─── unconfigured landing ─────────────────────────────────────────
+//
+// Rendered whenever buildConfig(env) throws — typically because the
+// operator just deployed the worker and hasn't filled in the env
+// binding panel yet. We deliberately return 200 OK rather than 500
+// because the SITE is reachable; it's the BACKEND wiring that's
+// incomplete, and there's nothing the visitor can do to retry. A
+// human-readable explanation + a popup beats a brick wall.
+
+function unconfiguredHtml(reason) {
+  const safeReason = escapeHtml(reason || "missing required env bindings");
+  // r_notification.js exposes rShowMessage(html, save, position,
+  // autoDisappearTime). save=0 = don't sessionStorage it across
+  // navigations (we re-fire on every load anyway); position='up'
+  // matches the top-right slide-in animation; autoDisappearTime=0
+  // keeps it pinned until the visitor dismisses (clicks).
+  const popupBody =
+    "<strong>goindex is not configured yet</strong>" +
+    "<br><span style=\"font-size:0.8em;opacity:0.75\">" +
+    safeReason +
+    "<br>set the env bindings on your worker panel — see " +
+    "<a href=\"https://github.com/RandallAnjie/goindex-extended#readme\" " +
+    "target=\"_blank\" rel=\"noopener\" style=\"color:#5b8def\">README</a>" +
+    "</span>";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>goindex · not configured</title>
+  <style>
+    body {
+      margin: 0; min-height: 100vh;
+      background: #161616; color: #e8e8e8;
+      font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      padding: 32px;
+    }
+    .card {
+      max-width: 520px;
+      background: #1f1f1f;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      padding: 32px 28px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    h1 { font-size: 1.2rem; margin: 0 0 12px; font-weight: 600; }
+    .reason {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 0.78rem; color: #d24545;
+      background: #2a1414; padding: 10px 12px; border-radius: 6px;
+      margin: 16px 0; word-wrap: break-word;
+    }
+    p { color: #999; margin: 8px 0; }
+    a { color: #5b8def; }
+    .hint { font-size: 0.8rem; color: #777; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>This index is not configured yet</h1>
+    <div class="reason">${safeReason}</div>
+    <p>Add the required runtime env bindings on your worker / Pages
+    panel: <code>CLIENT_ID</code>, <code>CLIENT_SECRET</code>,
+    <code>REFRESH_TOKEN</code>, <code>CRYPT_SECRET</code>.</p>
+    <p class="hint">Once they're in place, save the worker and reload
+    this page — no rebuild needed for env changes.</p>
+    <p class="hint">→ <a href="https://github.com/RandallAnjie/goindex-extended#readme" target="_blank" rel="noopener">README — full env binding reference</a></p>
+  </div>
+  <script src="https://notification.randallanjie.com/r_notification.js"></script>
+  <script>
+    // Pop the same message via r_notification so it slides in
+    // top-right matching Randall's other sites. Fires once DOM is
+    // ready; r_notification handles the queue if it hasn't loaded
+    // yet (the script itself queues calls made before
+    // DOMContentLoaded).
+    (function () {
+      function fire() {
+        if (typeof rShowMessage === "function") {
+          rShowMessage(${JSON.stringify(popupBody)}, 0, "up", 0);
+        }
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", fire);
+      } else {
+        fire();
+      }
+    })();
+  </script>
+</body>
+</html>`;
+}
 
 // ─── HTML shell ────────────────────────────────────────────────────
 //
