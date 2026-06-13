@@ -146,15 +146,141 @@ export default {
     try {
       buildConfig(env);
     } catch (e) {
-      return new Response(
-        `goindex configuration error\n\n${e.message}\n\n` +
-          `See the README for the full list of env bindings.`,
-        { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } },
-      );
+      // Missing / malformed bindings — instead of 500ing every visit
+      // (and burning the operator's dashboard with error rows), serve
+      // a "configure me" page that explains exactly what to add.
+      // Uses the r_notification.js popup library if reachable; falls
+      // back to a styled inline panel so the site still reads well
+      // when the CDN is blocked or offline.
+      return new Response(unconfiguredHtml(e.message), {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
     }
     return handleRequest(request);
   },
 };
+
+// ─── unconfigured landing ─────────────────────────────────────────
+//
+// Rendered whenever buildConfig(env) throws — typically because the
+// operator just deployed the worker and hasn't filled in the env
+// binding panel yet. We deliberately return 200 OK rather than 500
+// because the SITE is reachable; it's the BACKEND wiring that's
+// incomplete, and there's nothing the visitor can do to retry. A
+// human-readable explanation + a popup beats a brick wall.
+
+function unconfiguredHtml(reason) {
+  const safeReason = escapeHtml(reason || "missing required env bindings");
+  // r_notification.js exposes rShowMessage(html, save, position,
+  // autoDisappearTime). save=0 = don't sessionStorage it across
+  // navigations (we re-fire on every load anyway); position='up'
+  // matches the top-right slide-in animation; autoDisappearTime=0
+  // keeps it pinned until the visitor dismisses (clicks).
+  const popupBody =
+    "<strong>goindex is not configured yet</strong>" +
+    "<br><span style=\"font-size:0.8em;opacity:0.75\">" +
+    safeReason +
+    "<br>set the env bindings on your worker panel — see " +
+    "<a href=\"https://github.com/RandallAnjie/goindex-extended#readme\" " +
+    "target=\"_blank\" rel=\"noopener\" style=\"color:#5b8def\">README</a>" +
+    "</span>";
+  // Visual language mirrors r_notification.js's `.popup-little`:
+  //   - #fff background, #000 text
+  //   - 8px border-radius
+  //   - 0 0 10px rgba(0,0,0,0.1) box shadow
+  //   - 10px content padding
+  // The main card is just a wider version of the popup, so the page
+  // + slide-in chip read as one consistent design.
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>goindex · not configured</title>
+  <style>
+    body {
+      margin: 0; min-height: 100vh;
+      background: #f5f5f5; color: #000;
+      font: medium/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      padding: 32px 16px;
+    }
+    /* Match r_notification's .popup-little — same look, just wider. */
+    .card {
+      max-width: 540px; width: 100%;
+      background-color: #fff;
+      color: #000;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      border-radius: 8px;
+      padding: 24px;
+      overflow: hidden;
+    }
+    h1 {
+      font-size: 1.05rem;
+      margin: 0 0 10px;
+      font-weight: 600;
+    }
+    .reason {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 0.78rem;
+      color: #b03333;
+      background: #fdf2f2;
+      border: 1px solid #f5d5d5;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin: 14px 0;
+      word-wrap: break-word;
+    }
+    p { margin: 8px 0; font-size: 0.9rem; color: #333; }
+    code {
+      background: #f0f0f0;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 0.85em;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    a { color: #5b8def; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .hint {
+      font-size: 0.8rem;
+      color: #777;
+      margin-top: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>This index is not configured yet</h1>
+    <div class="reason">${safeReason}</div>
+    <p>Add the required runtime env bindings on your worker / Pages
+    panel: <code>CLIENT_ID</code>, <code>CLIENT_SECRET</code>,
+    <code>REFRESH_TOKEN</code>, <code>CRYPT_SECRET</code>.</p>
+    <p class="hint">Once they're in place, save the worker and reload
+    this page — no rebuild needed for env changes.</p>
+    <p class="hint">→ <a href="https://github.com/RandallAnjie/goindex-extended#readme" target="_blank" rel="noopener">README — full env binding reference</a></p>
+  </div>
+  <script src="https://notification.randallanjie.com/r_notification.js"></script>
+  <script>
+    // Slide-in chip top-right via r_notification. Same visual
+    // language as the main card, so the page reads as "big card +
+    // matching little card" rather than two different designs.
+    (function () {
+      function fire() {
+        if (typeof rShowMessage === "function") {
+          rShowMessage(${JSON.stringify(popupBody)}, 0, "up", 0);
+        }
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", fire);
+      } else {
+        fire();
+      }
+    })();
+  </script>
+</body>
+</html>`;
+}
 
 // ─── HTML shell ────────────────────────────────────────────────────
 //
