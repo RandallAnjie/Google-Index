@@ -146,13 +146,17 @@ export default {
     try {
       buildConfig(env);
     } catch (e) {
-      // Missing / malformed bindings — instead of 500ing every visit
-      // (and burning the operator's dashboard with error rows), serve
-      // a "configure me" page that explains exactly what to add.
-      // Uses the r_notification.js popup library if reachable; falls
-      // back to a styled inline panel so the site still reads well
-      // when the CDN is blocked or offline.
-      return new Response(unconfiguredHtml(e.message), {
+      // Missing / malformed bindings — serve a "configure me" page.
+      // CRITICALLY: do NOT echo `e.message` to the visitor. Past
+      // versions of this code surfaced parser errors that included
+      // the actual ROOTS bytes — a deployment-time mistake that
+      // would publish env values (including any `auth: {user: pass}`
+      // inside ROOTS) to anyone who hit the URL before the operator
+      // finished configuring. Visitors get a generic notice; the
+      // operator sees the full reason in their worker / Pages
+      // dashboard logs via `console.error`.
+      console.error("[goindex] unconfigured: " + (e && e.message));
+      return new Response(unconfiguredHtml(classifyReason(e)), {
         status: 200,
         headers: { "content-type": "text/html; charset=utf-8" },
       });
@@ -160,6 +164,30 @@ export default {
     return handleRequest(request);
   },
 };
+
+/**
+ * Bucket the raw error into a non-leaky category so the public
+ * "unconfigured" page can render a useful hint without echoing any
+ * value the operator typed. Anything that doesn't match a known
+ * shape falls back to the most generic message — better to err on
+ * the side of "be vague" than to leak a substring of the config.
+ */
+function classifyReason(err) {
+  const m = (err && err.message) || "";
+  if (m.indexOf("missing env bindings") >= 0) {
+    // The message names which bindings are missing, BUT only by their
+    // binding NAME (CLIENT_ID, REFRESH_TOKEN, …) — not values. Safe
+    // to surface; the operator needs this to know what to add.
+    return m;
+  }
+  if (m.indexOf("CRYPT_SECRET must be at least 32 chars") >= 0) {
+    return "CRYPT_SECRET is too short — needs ≥32 chars.";
+  }
+  if (m.indexOf("ROOTS") >= 0) {
+    return "ROOTS binding isn't valid JSON. See worker logs for the parser error.";
+  }
+  return "Worker isn't configured yet. See worker logs for details.";
+}
 
 // ─── unconfigured landing ─────────────────────────────────────────
 //
