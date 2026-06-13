@@ -67,7 +67,19 @@ function parseRoots(raw) {
       protect_file_link: !!r.protect_file_link,
     }));
   } catch (e) {
-    throw new Error(`ROOTS binding is not valid JSON: ${e.message}`);
+    // Surface the actual bytes the worker received + their type so
+    // the operator can spot whether the binding wire-format got
+    // mangled (e.g. host platform turning an array env into Go's
+    // `[object Object]` toString output, or the value being
+    // double-stringified by a misbehaving control plane).
+    const preview = typeof raw === "string"
+      ? raw.slice(0, 200)
+      : `(typeof ${typeof raw}) ${String(raw).slice(0, 200)}`;
+    throw new Error(
+      `ROOTS binding is not valid JSON: ${e.message}\n` +
+      `Received (first 200 chars): ${preview}\n` +
+      `Length: ${typeof raw === "string" ? raw.length : "n/a"}`,
+    );
   }
 }
 
