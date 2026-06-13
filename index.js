@@ -185,6 +185,13 @@ function unconfiguredHtml(reason) {
     "<a href=\"https://github.com/RandallAnjie/goindex-extended#readme\" " +
     "target=\"_blank\" rel=\"noopener\" style=\"color:#5b8def\">README</a>" +
     "</span>";
+  // Visual language mirrors r_notification.js's `.popup-little`:
+  //   - #fff background, #000 text
+  //   - 8px border-radius
+  //   - 0 0 10px rgba(0,0,0,0.1) box shadow
+  //   - 10px content padding
+  // The main card is just a wider version of the popup, so the page
+  // + slide-in chip read as one consistent design.
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -194,29 +201,52 @@ function unconfiguredHtml(reason) {
   <style>
     body {
       margin: 0; min-height: 100vh;
-      background: #161616; color: #e8e8e8;
-      font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: #f5f5f5; color: #000;
+      font: medium/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       display: flex; align-items: center; justify-content: center;
-      padding: 32px;
+      padding: 32px 16px;
     }
+    /* Match r_notification's .popup-little — same look, just wider. */
     .card {
-      max-width: 520px;
-      background: #1f1f1f;
-      border: 1px solid #2a2a2a;
-      border-radius: 12px;
-      padding: 32px 28px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      max-width: 540px; width: 100%;
+      background-color: #fff;
+      color: #000;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      border-radius: 8px;
+      padding: 24px;
+      overflow: hidden;
     }
-    h1 { font-size: 1.2rem; margin: 0 0 12px; font-weight: 600; }
+    h1 {
+      font-size: 1.05rem;
+      margin: 0 0 10px;
+      font-weight: 600;
+    }
     .reason {
       font-family: ui-monospace, "SF Mono", Menlo, monospace;
-      font-size: 0.78rem; color: #d24545;
-      background: #2a1414; padding: 10px 12px; border-radius: 6px;
-      margin: 16px 0; word-wrap: break-word;
+      font-size: 0.78rem;
+      color: #b03333;
+      background: #fdf2f2;
+      border: 1px solid #f5d5d5;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin: 14px 0;
+      word-wrap: break-word;
     }
-    p { color: #999; margin: 8px 0; }
-    a { color: #5b8def; }
-    .hint { font-size: 0.8rem; color: #777; margin-top: 16px; }
+    p { margin: 8px 0; font-size: 0.9rem; color: #333; }
+    code {
+      background: #f0f0f0;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 0.85em;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    a { color: #5b8def; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .hint {
+      font-size: 0.8rem;
+      color: #777;
+      margin-top: 14px;
+    }
   </style>
 </head>
 <body>
@@ -232,11 +262,9 @@ function unconfiguredHtml(reason) {
   </div>
   <script src="https://notification.randallanjie.com/r_notification.js"></script>
   <script>
-    // Pop the same message via r_notification so it slides in
-    // top-right matching Randall's other sites. Fires once DOM is
-    // ready; r_notification handles the queue if it hasn't loaded
-    // yet (the script itself queues calls made before
-    // DOMContentLoaded).
+    // Slide-in chip top-right via r_notification. Same visual
+    // language as the main card, so the page reads as "big card +
+    // matching little card" rather than two different designs.
     (function () {
       function fire() {
         if (typeof rShowMessage === "function") {
