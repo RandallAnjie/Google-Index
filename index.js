@@ -27,6 +27,7 @@
 // module scope so subsequent requests in the same isolate reuse it.
 // We can't compute this at module load because env isn't available
 // until the request handler runs.
+
 let authConfig = null;
 let uiConfig = null;
 
