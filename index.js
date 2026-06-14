@@ -68,6 +68,29 @@ function parseRoots(raw) {
       protect_file_link: !!r.protect_file_link,
     }));
   } catch (e) {
+    // Operator-only diagnostic: dump the first 80 bytes (with each
+    // char's code point) into stderr. This goes to the worker
+    // dashboard log, NOT into the public-facing "unconfigured" page,
+    // so any auth credentials stay private. Lets us tell at a
+    // glance whether the host platform double-escaped the value
+    // (literal `\` chars at positions 2,8,…) or shipped some other
+    // shape entirely.
+    try {
+      const head = String(raw).slice(0, 80);
+      const codes = [];
+      for (let i = 0; i < head.length; i++) {
+        codes.push(head.charCodeAt(i).toString(16).padStart(2, "0"));
+      }
+      console.error(
+        "[goindex] ROOTS parse fail · typeof=" + (typeof raw) +
+        " · length=" + (typeof raw === "string" ? raw.length : "n/a") +
+        " · head=" + JSON.stringify(head) +
+        " · hex=" + codes.join(" "),
+      );
+    } catch (_) {
+      // best-effort; the throw below is what the operator sees on
+      // the public page.
+    }
     throw new Error(`ROOTS binding is not valid JSON: ${e.message}`);
   }
 }
