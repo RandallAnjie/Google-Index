@@ -14,6 +14,31 @@
 
 import { escapeHtml } from "./format.js";
 
+// Block-level HTML tags that should pass through the renderer
+// untouched (after a sanitize pass). Inline-only tags aren't here —
+// those are escaped by inlineMarkdown for safety.
+const HTML_BLOCK_OPEN = /^<(details|summary|div|table|tbody|thead|tr|td|th|figure|figcaption|video|audio|section|article|aside|header|footer|nav|blockquote|pre)\b/i;
+
+/** Strip the obviously dangerous bits out of a raw HTML block. The
+ *  threat model is "untrusted README author" — README sits in Drive
+ *  next to the files and any user with edit access to the folder can
+ *  rewrite it. We don't want them dropping <script> / onerror / etc.
+ *  on visitors. iframe / object / embed are also stripped on
+ *  principle since they can frame external surfaces. */
+function sanitizeHtmlBlock(html) {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+    .replace(/<\/?(iframe|object|embed|form|input|button|meta|link)\b[^>]*>/gi, "")
+    // Event-handler attributes in any quoting style.
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
+    .replace(/\son\w+\s*=\s*[^\s>]+/gi, "")
+    // javascript: URLs in href / src.
+    .replace(/(href|src)\s*=\s*"\s*javascript:[^"]*"/gi, '$1="#"')
+    .replace(/(href|src)\s*=\s*'\s*javascript:[^']*'/gi, "$1='#'");
+}
+
 let _katexPromise = null;
 
 function loadKatex() {
@@ -47,6 +72,63 @@ export async function typesetMath(nodes) {
       });
     } catch (e) { /* noop — leave the source visible */ }
   });
+}
+
+let _mermaidPromise = null;
+
+function loadMermaid() {
+  if (_mermaidPromise) return _mermaidPromise;
+  _mermaidPromise = new Promise((res) => {
+    const js = document.createElement("script");
+    js.src = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js";
+    js.onload = () => {
+      const m = window.mermaid;
+      if (m) {
+        try {
+          // securityLevel:'loose' so click events / HTML labels work
+          // inside diagrams; we already sanitised the *page* HTML so
+          // the diagram source comes from the same trust origin.
+          // Theme picks up the current data-theme stamp if present.
+          const isDark = document.documentElement.getAttribute("data-theme") === "dark" ||
+            (!document.documentElement.getAttribute("data-theme") &&
+              matchMedia("(prefers-color-scheme: dark)").matches);
+          m.initialize({
+            startOnLoad: false,
+            theme: isDark ? "dark" : "default",
+            securityLevel: "loose",
+          });
+        } catch (_) { /* lib loaded but init refused — render() will throw */ }
+      }
+      res(m || null);
+    };
+    js.onerror = () => res(null);
+    document.head.appendChild(js);
+  });
+  return _mermaidPromise;
+}
+
+/** Render mermaid diagrams in `nodes`. Each node carries the raw
+ *  source as textContent (we stash it there at render-markdown time);
+ *  on success we replace the node's innerHTML with the produced SVG. */
+export async function renderMermaid(nodes) {
+  if (!nodes || !nodes.length) return;
+  const mermaid = await loadMermaid();
+  if (!mermaid) return;
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    const source = (n.textContent || "").trim();
+    if (!source) continue;
+    try {
+      const id = "mermaid-" + Date.now() + "-" + i;
+      const out = await mermaid.render(id, source);
+      n.innerHTML = out && out.svg ? out.svg : "";
+      n.classList.add("mermaid-ready");
+    } catch (e) {
+      // Diagram source had a syntax error — leave the source visible
+      // so the operator can see what failed.
+      n.classList.add("mermaid-error");
+    }
+  }
 }
 
 function inlineMarkdown(s, refs) {
@@ -194,16 +276,22 @@ export function renderMarkdown(src) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Code fence (open / close), with optional info string (language)
+    // Code fence (open / close), with optional info string (language).
+    // Special-case mermaid: emit a div whose textContent is the raw
+    // source so mermaid.render() can later swap it for SVG.
     if (line.startsWith("```")) {
       if (codeBuf === null) {
         flushPara(); closeListAll(); closeBq();
         codeLang = (line.slice(3).trim().split(/\s+/)[0] || "");
         codeBuf = [];
       } else {
-        const safe = codeLang.replace(/[^a-zA-Z0-9_+-]/g, "");
-        const cls = safe ? ' class="language-' + safe + '"' : "";
-        out.push("<pre><code" + cls + ">" + escapeHtml(codeBuf.join("\n")) + "</code></pre>");
+        if (codeLang.toLowerCase() === "mermaid") {
+          out.push('<div class="mermaid">' + escapeHtml(codeBuf.join("\n")) + "</div>");
+        } else {
+          const safe = codeLang.replace(/[^a-zA-Z0-9_+-]/g, "");
+          const cls = safe ? ' class="language-' + safe + '"' : "";
+          out.push("<pre><code" + cls + ">" + escapeHtml(codeBuf.join("\n")) + "</code></pre>");
+        }
         codeBuf = null; codeLang = "";
       }
       continue;
@@ -244,6 +332,30 @@ export function renderMarkdown(src) {
       }
     }
 
+    // HTML block — pass through (sanitised) when a line opens with
+    // one of the recognised block-level tags. Collect subsequent
+    // lines until the matching closing tag, or until a blank line if
+    // we never see a close. Single-line snippets work too because
+    // the open + close land on the same line.
+    const htmlOpen = line.match(HTML_BLOCK_OPEN);
+    if (htmlOpen) {
+      flushPara(); closeListAll(); closeBq();
+      const tag = htmlOpen[1].toLowerCase();
+      const closeRe = new RegExp("</" + tag + "\\s*>", "i");
+      const chunk = [line];
+      let closed = closeRe.test(line);
+      let j = i + 1;
+      while (!closed && j < lines.length) {
+        if (lines[j] === "") break; // CommonMark style 6 termination
+        chunk.push(lines[j]);
+        if (closeRe.test(lines[j])) closed = true;
+        j++;
+      }
+      out.push(sanitizeHtmlBlock(chunk.join("\n")));
+      i = j - 1;
+      continue;
+    }
+
     // ATX heading
     const hm = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
     if (hm) {
@@ -270,10 +382,15 @@ export function renderMarkdown(src) {
       continue;
     }
 
-    // HR (only if setext didn't grab it above)
-    if (/^-{3,}\s*$/.test(line) || /^\*{3,}\s*$/.test(line) || /^_{3,}\s*$/.test(line)) {
+    // HR (only if setext didn't grab it above). Three styles map to
+    // three classes so the stylesheet can give each its own look.
+    let hrClass = "";
+    if (/^-{3,}\s*$/.test(line)) hrClass = "hr-dash";
+    else if (/^\*{3,}\s*$/.test(line)) hrClass = "hr-star";
+    else if (/^_{3,}\s*$/.test(line)) hrClass = "hr-under";
+    if (hrClass) {
       flushPara(); closeListAll(); closeBq();
-      out.push("<hr>");
+      out.push('<hr class="' + hrClass + '">');
       continue;
     }
 

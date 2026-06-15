@@ -164,18 +164,17 @@ export function applyRconf(rconf, content) {
 }
 
 /**
- * FLIP (First / Last / Invert / Play) reorder animation.
+ * FLIP reorder animation via Web Animations API.
  *
- * 1. Snapshot every child's bounding box (First).
- * 2. Run the caller's mutate() — the DOM ends up in its final order.
- * 3. Read each child's new box (Last).
- * 4. Apply an instant transform that places each child back at its
- *    old visual position (Invert).
- * 5. On the next frame, remove the transform with a transition →
- *    each row slides smoothly to its real position (Play).
+ * The naïve "set transform with transition: none, then null it with
+ * a transition on the next frame" dance is fragile — Chrome will
+ * occasionally coalesce both style writes into the same paint and
+ * the row visibly jumps to its new position before sliding back.
  *
- * Rows whose visual position didn't change skip the transform pass
- * entirely, so an "everything's already in order" call is free.
+ * element.animate() sidesteps that: once called the browser owns
+ * the animation, paints keyframe 0 (the old visual position) on the
+ * very next frame, then interpolates to the natural position. No
+ * inline-style residue to clean up, no double rAF, no jump.
  */
 function flipReorder(parent, mutate) {
   const children = Array.from(parent.children);
@@ -184,40 +183,18 @@ function flipReorder(parent, mutate) {
 
   mutate();
 
-  const moved = [];
   children.forEach((c) => {
     const f = first.get(c);
     const l = c.getBoundingClientRect();
     const dx = f.left - l.left;
     const dy = f.top - l.top;
     if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
-    // Snap to the old position with no animation, then drop the
-    // transform on the next frame under a transition.
-    c.style.transition = "none";
-    c.style.transform = "translate(" + dx + "px, " + dy + "px)";
-    // CSS animation-delay on .list li is per-row (entrance stagger),
-    // but transform transition is separate so we set it explicitly
-    // when we Play.
-    moved.push(c);
-  });
-  if (moved.length === 0) return;
-
-  // One forced reflow so the browser commits the inverted state
-  // before we hand it the target state under a transition.
-  void parent.offsetWidth;
-
-  requestAnimationFrame(() => {
-    moved.forEach((c) => {
-      c.style.transition = "transform 0.45s cubic-bezier(0.2, 0.7, 0.3, 1)";
-      c.style.transform = "";
-    });
-    // Clear inline transition + transform once the animation is
-    // done, so subsequent hover / focus styles aren't affected.
-    setTimeout(() => {
-      moved.forEach((c) => {
-        c.style.transition = "";
-        c.style.transform = "";
-      });
-    }, 500);
+    c.animate(
+      [
+        { transform: "translate(" + dx + "px, " + dy + "px)" },
+        { transform: "translate(0, 0)" },
+      ],
+      { duration: 500, easing: "cubic-bezier(0.2, 0.7, 0.3, 1)", fill: "none" },
+    );
   });
 }

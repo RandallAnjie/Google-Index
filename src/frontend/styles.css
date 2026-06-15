@@ -314,7 +314,7 @@ body {
   display: flex; align-items: center; justify-content: center;
   font-size: 1.4rem; line-height: 1;
   color: var(--ink-sub); cursor: pointer;
-  border-radius: 6px;
+  border-radius: 50%;
   transition: color 0.15s, background 0.15s, transform 0.25s;
 }
 .modal-close:hover {
@@ -421,7 +421,69 @@ body.modal-open { overflow: hidden; }
   accent-color: var(--accent); cursor: default;
 }
 .markdown del { color: var(--ink-sub); text-decoration-thickness: 1px; }
-.markdown hr { border: none; border-top: 1px dashed var(--rule); margin: 24px 0; }
+
+/* Three distinct horizontal rules — markdown.js stamps a class based
+   on which token the source used. */
+.markdown hr { border: none; margin: 24px 0; height: 0; }
+.markdown hr.hr-dash  { border-top: 1px dashed var(--rule); }
+.markdown hr.hr-star  { border-top: 2px solid var(--accent); opacity: 0.55; margin: 32px 0; }
+.markdown hr.hr-under { border-top: 1px solid var(--rule); }
+
+/* Native disclosure widget — readable defaults; the operator's own
+   styles inside the README still win because they're an inline
+   <details style="…"> override. */
+.markdown details {
+  margin: 14px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--bg-sub);
+}
+.markdown details > summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--ink);
+  font-family: var(--serif);
+  list-style: none;
+}
+.markdown details > summary::-webkit-details-marker { display: none; }
+.markdown details > summary::before {
+  content: "›";
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--accent);
+  transition: transform 0.2s;
+}
+.markdown details[open] > summary::before { transform: rotate(90deg); }
+.markdown details[open] {
+  background: var(--bg-soft);
+}
+
+/* Mermaid container — rendered SVG fills the box, source-stage state
+   shows monospaced raw text so a syntax error stays legible. */
+.markdown .mermaid {
+  margin: 14px 0;
+  padding: 14px;
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--ink-sub);
+  overflow-x: auto;
+}
+.markdown .mermaid.mermaid-ready {
+  padding: 18px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: inherit;
+}
+.markdown .mermaid svg { max-width: 100%; height: auto; }
+.markdown .mermaid.mermaid-error {
+  border-color: #c0392b;
+  color: #c0392b;
+}
 
 /* footer */
 .footer {

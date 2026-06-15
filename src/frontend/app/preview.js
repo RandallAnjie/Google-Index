@@ -4,7 +4,7 @@
 // backdrop, Escape, × button, SPA navigation.
 
 import { pathBase } from "./state.js";
-import { renderMarkdown, typesetMath } from "./markdown.js";
+import { renderMarkdown, typesetMath, renderMermaid } from "./markdown.js";
 
 /** Keydown handler installed only while a modal is open. Module-scope
  *  reference so closeModal() can detach it cleanly. */
@@ -112,6 +112,8 @@ export function openPreview(file, basePath) {
         md.innerHTML = renderMarkdown(t);
         const mathNodes = md.querySelectorAll(".math-inline, .math-display");
         if (mathNodes.length) typesetMath(mathNodes);
+        const mermaidNodes = md.querySelectorAll(".mermaid");
+        if (mermaidNodes.length) renderMermaid(mermaidNodes);
       })
       .catch(() => { md.textContent = "(failed to load)"; });
   } else if (/^(docx?|xlsx?|pptx?|odt|ods|odp|pages|numbers|keynote)$/.test(ext)) {

@@ -9,7 +9,7 @@ import { renderBreadcrumb } from "./breadcrumb.js";
 import { showSkeleton } from "./skeleton.js";
 import { navigateTo } from "./nav.js";
 import { openPreview } from "./preview.js";
-import { renderMarkdown, typesetMath } from "./markdown.js";
+import { renderMarkdown, typesetMath, renderMermaid } from "./markdown.js";
 import { readRconf, applyRconf } from "./rconfig.js";
 
 const FOLDER_MIME = "application/vnd.google-apps.folder";
@@ -100,6 +100,8 @@ async function renderReadme(file, dirPath) {
   document.getElementById("content").appendChild(box);
   const mathNodes = box.querySelectorAll(".math-inline, .math-display");
   if (mathNodes.length) typesetMath(mathNodes);
+  const mermaidNodes = box.querySelectorAll(".mermaid");
+  if (mermaidNodes.length) renderMermaid(mermaidNodes);
 }
 
 export async function bootList() {
