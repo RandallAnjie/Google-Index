@@ -547,9 +547,13 @@ body {
 .list li:hover::before { opacity: 1; transform: scaleY(1); }
 .list li:last-child { border-bottom: none; }
 .list li .icon {
-  width: 22px; text-align: center; flex-shrink: 0;
-  font-size: 1.05rem; line-height: 1; opacity: 0.85;
+  width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; color: var(--ink-sub);
+  transition: color 0.15s, transform 0.2s;
 }
+.list li .icon svg { width: 18px; height: 18px; display: block; }
+.list li:hover .icon { color: var(--accent); }
+.list li.folder:hover .icon { transform: translateX(1px); }
 .list li .name {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -560,7 +564,7 @@ body {
 }
 .list li .meta + .meta { margin-left: 14px; }
 .list li.folder .name { font-weight: 500; color: var(--ink); }
-.list li.folder .icon { color: var(--accent); opacity: 1; }
+.list li.folder .icon { color: var(--accent); }
 .list li.file { color: var(--ink); }
 
 /* preview */
@@ -589,7 +593,9 @@ body {
 .preview .actions a.secondary:hover {
   border-color: var(--accent); color: var(--accent);
 }
-.preview img, .preview video, .preview audio { max-width: 100%; border-radius: 6px; }
+.preview img, .preview video { max-width: 100%; max-height: 70vh; border-radius: 6px; display: block; margin: 0 auto; }
+.preview img { object-fit: contain; background: var(--bg); }
+.preview audio { width: 100%; }
 .preview pre {
   background: var(--bg); padding: 14px; border-radius: 6px;
   overflow: auto; font-size: 0.82rem; max-height: 70vh;
@@ -649,6 +655,30 @@ body {
   font-family: var(--serif); font-style: italic;
 }
 
+/* selection, scrollbar, entrance — final polish */
+::selection { background: var(--accent-soft); color: var(--ink); }
+::-moz-selection { background: var(--accent-soft); color: var(--ink); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--rule); border-radius: 5px;
+  border: 2px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--accent); background-clip: padding-box; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+.breadcrumb, .list, .preview, .markdown {
+  animation: fadeIn 0.3s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+a:focus-visible, button:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
+}
+
 @media (max-width: 600px) {
   #app { padding: 0 18px; }
   .topbar { padding: 22px 0 14px; gap: 14px; }
@@ -659,6 +689,11 @@ body {
   .list li .meta { display: none; }
   .list li .meta:last-of-type { display: inline; font-size: 0.72rem; }
   .markdown { padding: 20px 22px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001s !important; transition: none !important; }
+  #theme-toggle:hover { transform: none; }
 }
 `;
 
@@ -754,16 +789,30 @@ const JS = `
 
   // Icon glyph by file extension — keeps the list scannable without
   // pulling in an icon font.
+  // Single-stroke 24x24 SVGs. Inlined so the icon set is consistent
+  // across platforms (emoji rendering varies wildly by OS / vendor and
+  // makes the UI look like a third-party widget). currentColor lets
+  // .icon's CSS colour drive every glyph.
+  const SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">';
+  const SVG_FOLDER = SVG_OPEN + '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>';
+  const SVG_IMAGE  = SVG_OPEN + '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>';
+  const SVG_VIDEO  = SVG_OPEN + '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="m10 10 5 2-5 2z" fill="currentColor" stroke="none"/></svg>';
+  const SVG_AUDIO  = SVG_OPEN + '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+  const SVG_ARCHIVE = SVG_OPEN + '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M12 3v6m-2 4h4"/></svg>';
+  const SVG_CODE   = SVG_OPEN + '<path d="m8 8-5 4 5 4M16 8l5 4-5 4M14 4l-4 16"/></svg>';
+  const SVG_DOC    = SVG_OPEN + '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h6"/></svg>';
+  const SVG_FILE   = SVG_OPEN + '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>';
+
   function iconFor(name, mimeType) {
-    if (mimeType === "application/vnd.google-apps.folder") return "▸";
+    if (mimeType === "application/vnd.google-apps.folder") return SVG_FOLDER;
     const ext = (name.split(".").pop() || "").toLowerCase();
-    if (/^(jpe?g|png|gif|webp|svg|bmp|heic)$/.test(ext)) return "◧";
-    if (/^(mp4|webm|mkv|mov|avi|flv|m4v|wmv)$/.test(ext)) return "▶";
-    if (/^(mp3|flac|wav|ogg|m4a|aac)$/.test(ext)) return "♪";
-    if (/^(pdf)$/.test(ext)) return "▤";
-    if (/^(zip|tar|gz|rar|7z|bz2)$/.test(ext)) return "◫";
-    if (/^(md|txt|js|ts|py|go|rs|java|c|cpp|sh|yaml|yml|json|html|css)$/.test(ext)) return "≡";
-    return "·";
+    if (/^(jpe?g|png|gif|webp|svg|bmp|heic|avif|tiff?)$/.test(ext)) return SVG_IMAGE;
+    if (/^(mp4|webm|mkv|mov|avi|flv|m4v|wmv)$/.test(ext)) return SVG_VIDEO;
+    if (/^(mp3|flac|wav|ogg|m4a|aac|opus|ape)$/.test(ext)) return SVG_AUDIO;
+    if (/^(zip|tar|gz|rar|7z|bz2|xz)$/.test(ext)) return SVG_ARCHIVE;
+    if (/^(js|mjs|ts|tsx|jsx|py|go|rs|java|c|h|cpp|hpp|sh|bash|zsh|yaml|yml|json|toml|html|css|scss|vue|svelte|rb|php|swift|kt|sql)$/.test(ext)) return SVG_CODE;
+    if (/^(md|markdown|mkd|txt|rst|pdf|doc|docx|epub|rtf)$/.test(ext)) return SVG_DOC;
+    return SVG_FILE;
   }
 
   function fmtSize(b) {
@@ -823,7 +872,7 @@ const JS = `
       li.className = f.mimeType === "application/vnd.google-apps.folder" ? "folder" : "file";
       const icon = document.createElement("span");
       icon.className = "icon";
-      icon.textContent = iconFor(f.name, f.mimeType);
+      icon.innerHTML = iconFor(f.name, f.mimeType);
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = f.name;
