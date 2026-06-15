@@ -37,8 +37,14 @@ export async function handleRequest(request, config) {
   const gds = state.gds;
   const url = new URL(request.url);
   let path = url.pathname;
+  // Use a path-only Location so the browser keeps the page's own
+  // protocol + host. Building an absolute URL from request.url breaks
+  // behind a TLS-terminating edge proxy (RandallFlare, Cloudflare,
+  // etc.): the request reaches the worker as http://… so url.origin
+  // is "http://host", and the visitor's browser blocks the redirect
+  // as mixed content when the page itself was loaded over HTTPS.
   const redirectToIndexPage = () =>
-    new Response("", { status: 301, headers: { Location: `${url.origin}/0:/` } });
+    new Response("", { status: 301, headers: { Location: "/0:/" } });
 
   if (path === "/") return redirectToIndexPage();
   if (path.toLowerCase() === "/favicon.ico") return new Response("", { status: 404 });
