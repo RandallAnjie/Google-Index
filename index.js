@@ -681,8 +681,27 @@ body {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: none; }
 }
-.breadcrumb, .list, .preview, .markdown {
+.preview, .markdown {
   animation: fadeIn 0.3s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+/* Breadcrumb fly-in on every navigation (toggled by JS via the
+   .enter class — remove + force-reflow + re-add to restart). */
+@keyframes bcFly {
+  from { opacity: 0; transform: translateX(-14px); }
+  to   { opacity: 1; transform: none; }
+}
+.breadcrumb.enter { animation: bcFly 0.42s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+
+/* Per-row stagger entrance. JS sets --i (clamped to 18) so a 500-row
+   directory still finishes its cascade in under half a second. */
+@keyframes liEnter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.list li {
+  animation: liEnter 0.42s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation-delay: calc(var(--i, 0) * 22ms);
 }
 
 a:focus-visible, button:focus-visible, select:focus-visible {
@@ -766,6 +785,31 @@ const JS = `
   }
   function pathBase() { return "/" + getOrder() + ":"; }
 
+  /** Restart a CSS keyframe animation on an existing element.
+   *  Removing + re-adding the class is enough only if a layout flush
+   *  happens between the two — touching offsetWidth forces that. */
+  function playEnter(el, cls) {
+    if (!el) return;
+    el.classList.remove(cls);
+    void el.offsetWidth;
+    el.classList.add(cls);
+  }
+
+  /** SPA-style directory navigation: pushState then re-run the list
+   *  pipeline. Falls back to a full load if the target is for a
+   *  different drive (different pathBase) so cross-drive switches
+   *  still pick up the right __INIT__ / __DRIVE_NAMES__. */
+  function navigateTo(url) {
+    if (!url) return;
+    if (!url.startsWith(pathBase())) {
+      location.href = url; return;
+    }
+    if (location.pathname === url) return;
+    history.pushState({}, "", url);
+    bootList();
+  }
+  window.addEventListener("popstate", () => bootList());
+
   // Breadcrumb renders the current path. Each segment is a link to
   // its prefix, terminating in a non-link for the current dir.
   function renderBreadcrumb(path) {
@@ -795,6 +839,7 @@ const JS = `
         el.appendChild(span);
       }
     });
+    playEnter(el, "enter");
   }
 
   // Icon glyph by file extension — keeps the list scannable without
@@ -877,9 +922,12 @@ const JS = `
     const files = items.filter((f) => f.mimeType !== "application/vnd.google-apps.folder");
     const ul = document.createElement("ul");
     ul.className = "list";
-    [...folders, ...files].forEach((f) => {
+    [...folders, ...files].forEach((f, idx) => {
       const li = document.createElement("li");
       li.className = f.mimeType === "application/vnd.google-apps.folder" ? "folder" : "file";
+      // Clamp the stagger index so directories with hundreds of rows
+      // don't make the last item wait several seconds for its turn.
+      li.style.setProperty("--i", String(Math.min(idx, 18)));
       const icon = document.createElement("span");
       icon.className = "icon";
       icon.innerHTML = iconFor(f.name, f.mimeType);
@@ -897,7 +945,7 @@ const JS = `
         if (f.mimeType === "application/vnd.google-apps.folder") {
           const here = opts.searchMode ? (f.path || "/") : currentPath();
           const next = opts.searchMode ? f.path : here + encodeURIComponent(f.name) + "/";
-          location.href = pathBase() + next;
+          navigateTo(pathBase() + next);
         } else {
           openPreview(f, opts.searchMode ? f.path : currentPath());
         }
@@ -1382,6 +1430,17 @@ const JS = `
         '<div class="error">search failed — ' + e.message + '</div>';
     }
   }
+
+  // SPA-style intercept on breadcrumb links — same-drive jumps go
+  // through pushState + bootList instead of a full reload.
+  document.getElementById("breadcrumb").addEventListener("click", (e) => {
+    const a = e.target.closest("a");
+    if (!a) return;
+    const href = a.getAttribute("href");
+    if (!href || !href.startsWith(pathBase())) return;
+    e.preventDefault();
+    navigateTo(href);
+  });
 
   if (init.isSearchPage) bootSearch();
   else bootList();
