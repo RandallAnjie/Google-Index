@@ -771,7 +771,7 @@ const JS = `
       // README.txt — picking the first hit in listing order.
       const readme = items.find((f) =>
         f && f.name &&
-        /^readme(\.(md|markdown|mkd|txt))?$/i.test(f.name) &&
+        /^readme(\\.(md|markdown|mkd|txt))?$/i.test(f.name) &&
         f.mimeType !== "application/vnd.google-apps.folder"
       );
       if (readme) renderReadme(readme, path);
@@ -810,21 +810,27 @@ const JS = `
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
-      .replace(/\"/g, "&quot;")
+      .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
   }
   function inlineMarkdown(s) {
     s = escapeHtml(s);
+    // Heads up: every backslash here lives inside the outer
+    // \`const JS = …\` template literal, and the template parse
+    // step silently *drops* any backslash that precedes a
+    // non-recognised escape character (\\[, \\], \\(, \\), \\s, \\d …).
+    // To get a single backslash into the runtime regex literal
+    // we have to write *two* backslashes in the source.
     // Images before links (link syntax is a subset of image syntax).
-    s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,
+    s = s.replace(/!\\[([^\\]]*)\\]\\(([^)\\s]+)\\)/g,
       '<img alt="$1" src="$2" loading="lazy">');
-    s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
+    s = s.replace(/\\[([^\\]]+)\\]\\(([^)\\s]+)\\)/g,
       '<a href="$2" target="_blank" rel="noopener">$1</a>');
     s = s.replace(/\`([^\`]+)\`/g, "<code>$1</code>");
-    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/\\*\\*([^*]+)\\*\\*/g, "<strong>$1</strong>");
     s = s.replace(/__([^_]+)__/g, "<strong>$1</strong>");
-    s = s.replace(/(^|[\s(])\*([^*\s][^*]*[^*\s]|\S)\*/g, "$1<em>$2</em>");
-    s = s.replace(/(^|[\s(])_([^_\s][^_]*[^_\s]|\S)_/g, "$1<em>$2</em>");
+    s = s.replace(/(^|[\\s(])\\*([^*\\s][^*]*[^*\\s]|\\S)\\*/g, "$1<em>$2</em>");
+    s = s.replace(/(^|[\\s(])_([^_\\s][^_]*[^_\\s]|\\S)_/g, "$1<em>$2</em>");
     return s;
   }
   function renderMarkdown(src) {
@@ -834,28 +840,28 @@ const JS = `
     let inBlockquote = false;
     const closeList = () => { if (listKind) { out.push("</" + listKind + ">"); listKind = null; } };
     const closeBq = () => { if (inBlockquote) { out.push("</blockquote>"); inBlockquote = false; } };
-    for (const raw of src.split("\n")) {
-      const line = raw.replace(/\r$/, "");
+    for (const raw of src.split("\\n")) {
+      const line = raw.replace(/\\r$/, "");
       // Code fence (open / close)
       if (line.startsWith("\`\`\`")) {
         if (codeBuf === null) {
           closeList(); closeBq();
           codeBuf = [];
         } else {
-          out.push("<pre><code>" + escapeHtml(codeBuf.join("\n")) + "</code></pre>");
+          out.push("<pre><code>" + escapeHtml(codeBuf.join("\\n")) + "</code></pre>");
           codeBuf = null;
         }
         continue;
       }
       if (codeBuf !== null) { codeBuf.push(line); continue; }
       // Horizontal rule
-      if (/^-{3,}\s*$/.test(line) || /^\*{3,}\s*$/.test(line) || /^_{3,}\s*$/.test(line)) {
+      if (/^-{3,}\\s*$/.test(line) || /^\\*{3,}\\s*$/.test(line) || /^_{3,}\\s*$/.test(line)) {
         closeList(); closeBq();
         out.push("<hr>");
         continue;
       }
       // Header
-      const hm = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+      const hm = line.match(/^(#{1,6})\\s+(.+?)\\s*#*\\s*$/);
       if (hm) {
         closeList(); closeBq();
         out.push("<h" + hm[1].length + ">" + inlineMarkdown(hm[2]) + "</h" + hm[1].length + ">");
@@ -870,8 +876,8 @@ const JS = `
       }
       closeBq();
       // Lists
-      const ul = line.match(/^\s*[-*+]\s+(.+)$/);
-      const ol = line.match(/^\s*\d+\.\s+(.+)$/);
+      const ul = line.match(/^\\s*[-*+]\\s+(.+)$/);
+      const ol = line.match(/^\\s*\\d+\\.\\s+(.+)$/);
       if (ul) {
         if (listKind !== "ul") { closeList(); out.push("<ul>"); listKind = "ul"; }
         out.push("<li>" + inlineMarkdown(ul[1]) + "</li>");
@@ -888,9 +894,9 @@ const JS = `
     }
     closeList(); closeBq();
     if (codeBuf !== null) {
-      out.push("<pre><code>" + escapeHtml(codeBuf.join("\n")) + "</code></pre>");
+      out.push("<pre><code>" + escapeHtml(codeBuf.join("\\n")) + "</code></pre>");
     }
-    return out.join("\n");
+    return out.join("\\n");
   }
 
   async function bootSearch() {
