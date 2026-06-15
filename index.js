@@ -646,6 +646,16 @@ body {
 .markdown tbody tr:nth-child(even) td { background: var(--bg-sub); }
 .markdown .math-display { display: block; overflow-x: auto; padding: 10px 0; text-align: center; }
 .markdown .math-inline { font-family: inherit; }
+.markdown ul, .markdown ol { padding-left: 1.6em; margin: 8px 0; }
+.markdown ul ul, .markdown ol ol, .markdown ul ol, .markdown ol ul { margin: 4px 0; }
+.markdown li { margin: 2px 0; }
+.markdown li.task { list-style: none; margin-left: -1.4em; }
+.markdown li.task input {
+  margin-right: 8px; vertical-align: middle;
+  accent-color: var(--accent); cursor: default;
+}
+.markdown del { color: var(--ink-sub); text-decoration-thickness: 1px; }
+.markdown hr { border: none; border-top: 1px dashed var(--rule); margin: 24px 0; }
 
 /* footer */
 .footer {
@@ -1060,10 +1070,22 @@ const JS = `
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
   }
-  function inlineMarkdown(s) {
-    // Pull \\$…\\$ math out *before* HTML escape so the TeX source
-    // survives intact (\\<, \\&, \\\\ etc are common in LaTeX).
-    // Placeholder uses a NUL char which can't appear in source.
+  function inlineMarkdown(s, refs) {
+    // Stage 1 — pull literal sequences that must survive the regex
+    // passes intact: backslash-escapes (\\*, \\_, \\\\ …), math, and
+    // inline code. They all become NUL-bracketed placeholders so the
+    // emphasis / link / strike passes can't touch them. NUL can't
+    // appear in source text (no editor produces it).
+    const escapes = [];
+    s = s.replace(/\\\\([\\\\\`*_{}\\[\\]()#+\\-.!~|>])/g, (_m, ch) => {
+      escapes.push(ch);
+      return "\\u0000E" + (escapes.length - 1) + "\\u0000";
+    });
+    const codes = [];
+    s = s.replace(/\`([^\`]+)\`/g, (_m, code) => {
+      codes.push(code);
+      return "\\u0000C" + (codes.length - 1) + "\\u0000";
+    });
     const maths = [];
     s = s.replace(/\\$([^\\$\\n]+)\\$/g, (_m, tex) => {
       maths.push(tex);
@@ -1076,22 +1098,44 @@ const JS = `
     // non-recognised escape character (\\[, \\], \\(, \\), \\s, \\d …).
     // To get a single backslash into the runtime regex literal
     // we have to write *two* backslashes in the source.
+    //
     // Images before links (link syntax is a subset of image syntax).
     s = s.replace(/!\\[([^\\]]*)\\]\\(([^)\\s]+)\\)/g,
       '<img alt="$1" src="$2" loading="lazy">');
+    // Reference-style image / link if a refs table was passed in.
+    if (refs) {
+      s = s.replace(/!\\[([^\\]]*)\\]\\[([^\\]]+)\\]/g, (m, alt, id) => {
+        const url = refs[id.toLowerCase()];
+        return url ? '<img alt="' + alt + '" src="' + url + '" loading="lazy">' : m;
+      });
+      s = s.replace(/\\[([^\\]]+)\\]\\[([^\\]]*)\\]/g, (m, txt, id) => {
+        const key = (id || txt).toLowerCase();
+        const url = refs[key];
+        return url ? '<a href="' + url + '" target="_blank" rel="noopener">' + txt + '</a>' : m;
+      });
+    }
     s = s.replace(/\\[([^\\]]+)\\]\\(([^)\\s]+)\\)/g,
       '<a href="$2" target="_blank" rel="noopener">$1</a>');
-    s = s.replace(/\`([^\`]+)\`/g, "<code>$1</code>");
+    // Autolink \\<url\\> / \\<email\\> (CommonMark angle-bracket form).
+    // After escapeHtml the angle brackets show up as &lt; / &gt;.
+    s = s.replace(/&lt;(https?:\\/\\/[^&\\s]+)&gt;/g,
+      '<a href="$1" target="_blank" rel="noopener">$1</a>');
+    s = s.replace(/&lt;([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})&gt;/g,
+      '<a href="mailto:$1">$1</a>');
+    // Emphasis. Strong before em so ** doesn't get eaten as two *.
     s = s.replace(/\\*\\*([^*]+)\\*\\*/g, "<strong>$1</strong>");
     s = s.replace(/__([^_]+)__/g, "<strong>$1</strong>");
     s = s.replace(/(^|[\\s(])\\*([^*\\s][^*]*[^*\\s]|\\S)\\*/g, "$1<em>$2</em>");
     s = s.replace(/(^|[\\s(])_([^_\\s][^_]*[^_\\s]|\\S)_/g, "$1<em>$2</em>");
-    // Restore math placeholders. data-tex carries the TeX source
-    // so typesetMath() can re-render via KaTeX after the fact.
+    // GFM strikethrough \\~\\~text\\~\\~
+    s = s.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+    // Restore placeholders, last-to-first so order doesn't matter.
     s = s.replace(/\\u0000M(\\d+)\\u0000/g, (_m, i) => {
       const tex = maths[+i];
       return '<span class="math-inline" data-tex="' + escapeHtml(tex) + '">' + escapeHtml(tex) + '</span>';
     });
+    s = s.replace(/\\u0000C(\\d+)\\u0000/g, (_m, i) => "<code>" + escapeHtml(codes[+i]) + "</code>");
+    s = s.replace(/\\u0000E(\\d+)\\u0000/g, (_m, i) => escapeHtml(escapes[+i]));
     return s;
   }
   function splitRow(line) {
@@ -1106,43 +1150,94 @@ const JS = `
     if (left) return "left";
     return "";
   }
-  function buildTable(header, aligns, rows) {
+  function buildTable(header, aligns, rows, refs) {
     const styleOf = (k) => aligns[k] ? ' style="text-align:' + aligns[k] + '"' : "";
-    const th = header.map((h, k) => "<th" + styleOf(k) + ">" + inlineMarkdown(h) + "</th>").join("");
+    const th = header.map((h, k) => "<th" + styleOf(k) + ">" + inlineMarkdown(h, refs) + "</th>").join("");
     const trs = rows.map((r) => {
-      const tds = r.map((c, k) => "<td" + styleOf(k) + ">" + inlineMarkdown(c) + "</td>").join("");
+      const tds = r.map((c, k) => "<td" + styleOf(k) + ">" + inlineMarkdown(c, refs) + "</td>").join("");
       return "<tr>" + tds + "</tr>";
     }).join("");
     return "<table><thead><tr>" + th + "</tr></thead><tbody>" + trs + "</tbody></table>";
   }
   function renderMarkdown(src) {
+    let lines = src.split("\\n").map((l) => l.replace(/\\r$/, ""));
+
+    // Pre-pass: collect [id]: url reference-link definitions and strip
+    // them from the body. Definitions inside a fenced code block are
+    // not real, so track fence state.
+    const refs = {};
+    {
+      let inFence = false;
+      const kept = [];
+      for (const l of lines) {
+        if (l.startsWith("\`\`\`")) { inFence = !inFence; kept.push(l); continue; }
+        if (!inFence) {
+          const m = l.match(/^\\s{0,3}\\[([^\\]]+)\\]:\\s+(\\S+)/);
+          if (m) { refs[m[1].toLowerCase()] = m[2]; continue; }
+        }
+        kept.push(l);
+      }
+      lines = kept;
+    }
+
     const out = [];
-    let codeBuf = null;
+    let codeBuf = null, codeLang = "";
     let mathBuf = null;
-    let listKind = null; // "ul" | "ol" | null
+    let paraBuf = [];
+    const listStack = []; // [{ kind: "ul"|"ol", indent: number }]
     let inBlockquote = false;
-    const closeList = () => { if (listKind) { out.push("</" + listKind + ">"); listKind = null; } };
-    const closeBq = () => { if (inBlockquote) { out.push("</blockquote>"); inBlockquote = false; } };
-    const lines = src.split("\\n").map((l) => l.replace(/\\r$/, ""));
     const tableDelim = /^\\s*\\|?\\s*:?-{3,}:?\\s*(\\|\\s*:?-{3,}:?\\s*)+\\|?\\s*$/;
+
+    const flushPara = () => {
+      if (paraBuf.length === 0) return;
+      const parts = paraBuf.map((l, idx) => {
+        const hardBreak = idx < paraBuf.length - 1 && /(\\s\\s+|\\\\)$/.test(l);
+        const cleaned = l.replace(/(\\s\\s+|\\\\)$/, "");
+        return inlineMarkdown(cleaned, refs) + (hardBreak ? "<br>" : "");
+      });
+      out.push("<p>" + parts.join(" ") + "</p>");
+      paraBuf = [];
+    };
+    const closeListAll = () => {
+      while (listStack.length) out.push("</" + listStack.pop().kind + ">");
+    };
+    const adjustListStack = (indent, kind) => {
+      while (listStack.length && listStack[listStack.length - 1].indent > indent) {
+        out.push("</" + listStack.pop().kind + ">");
+      }
+      const top = listStack[listStack.length - 1];
+      if (!top || top.indent < indent) {
+        out.push("<" + kind + ">"); listStack.push({ kind, indent });
+      } else if (top.kind !== kind) {
+        out.push("</" + listStack.pop().kind + ">");
+        out.push("<" + kind + ">"); listStack.push({ kind, indent });
+      }
+    };
+    const closeBq = () => { if (inBlockquote) { out.push("</blockquote>"); inBlockquote = false; } };
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      // Code fence (open / close)
+
+      // Code fence (open / close), with optional info string (language)
       if (line.startsWith("\`\`\`")) {
         if (codeBuf === null) {
-          closeList(); closeBq();
+          flushPara(); closeListAll(); closeBq();
+          codeLang = (line.slice(3).trim().split(/\\s+/)[0] || "");
           codeBuf = [];
         } else {
-          out.push("<pre><code>" + escapeHtml(codeBuf.join("\\n")) + "</code></pre>");
-          codeBuf = null;
+          const safe = codeLang.replace(/[^a-zA-Z0-9_+-]/g, "");
+          const cls = safe ? ' class="language-' + safe + '"' : "";
+          out.push("<pre><code" + cls + ">" + escapeHtml(codeBuf.join("\\n")) + "</code></pre>");
+          codeBuf = null; codeLang = "";
         }
         continue;
       }
       if (codeBuf !== null) { codeBuf.push(line); continue; }
+
       // Math block fence ($$)
       if (line.trim() === "$$") {
         if (mathBuf === null) {
-          closeList(); closeBq();
+          flushPara(); closeListAll(); closeBq();
           mathBuf = [];
         } else {
           const tex = mathBuf.join("\\n");
@@ -1152,23 +1247,38 @@ const JS = `
         continue;
       }
       if (mathBuf !== null) { mathBuf.push(line); continue; }
-      // Horizontal rule
-      if (/^-{3,}\\s*$/.test(line) || /^\\*{3,}\\s*$/.test(line) || /^_{3,}\\s*$/.test(line)) {
-        closeList(); closeBq();
-        out.push("<hr>");
-        continue;
+
+      // Blank line closes a paragraph but lets lists / blockquote span.
+      if (line.trim() === "") { flushPara(); continue; }
+
+      // Setext heading — line followed by === (h1) or --- (h2). Must
+      // not be confused with HR / list delimiter; check we have a real
+      // text line not currently being collected into something else.
+      if (paraBuf.length === 0 && listStack.length === 0 && !inBlockquote && i + 1 < lines.length) {
+        const next = lines[i + 1];
+        if (/^=+\\s*$/.test(next)) {
+          flushPara();
+          out.push("<h1>" + inlineMarkdown(line, refs) + "</h1>");
+          i++; continue;
+        }
+        if (/^-+\\s*$/.test(next) && !/^[-*+]\\s/.test(line) && !/^\\d+\\.\\s/.test(line) && line.trim() !== "") {
+          flushPara();
+          out.push("<h2>" + inlineMarkdown(line, refs) + "</h2>");
+          i++; continue;
+        }
       }
-      // Header
+
+      // ATX heading
       const hm = line.match(/^(#{1,6})\\s+(.+?)\\s*#*\\s*$/);
       if (hm) {
-        closeList(); closeBq();
-        out.push("<h" + hm[1].length + ">" + inlineMarkdown(hm[2]) + "</h" + hm[1].length + ">");
+        flushPara(); closeListAll(); closeBq();
+        out.push("<h" + hm[1].length + ">" + inlineMarkdown(hm[2], refs) + "</h" + hm[1].length + ">");
         continue;
       }
-      // GFM table: a pipe-bearing header line followed by a delimiter
-      // row of dashes (and optional alignment colons).
+
+      // GFM table
       if (line.indexOf("|") >= 0 && i + 1 < lines.length && tableDelim.test(lines[i + 1])) {
-        closeList(); closeBq();
+        flushPara(); closeListAll(); closeBq();
         const header = splitRow(line);
         const aligns = splitRow(lines[i + 1]).map(parseAlign);
         const rows = [];
@@ -1179,38 +1289,67 @@ const JS = `
           rows.push(splitRow(r));
           j++;
         }
-        out.push(buildTable(header, aligns, rows));
+        out.push(buildTable(header, aligns, rows, refs));
         i = j - 1;
         continue;
       }
+
+      // HR (only if setext didn't grab it above)
+      if (/^-{3,}\\s*$/.test(line) || /^\\*{3,}\\s*$/.test(line) || /^_{3,}\\s*$/.test(line)) {
+        flushPara(); closeListAll(); closeBq();
+        out.push("<hr>");
+        continue;
+      }
+
       // Blockquote
       if (line.startsWith("> ")) {
-        closeList();
+        flushPara(); closeListAll();
         if (!inBlockquote) { out.push("<blockquote>"); inBlockquote = true; }
-        out.push("<p>" + inlineMarkdown(line.slice(2)) + "</p>");
+        out.push("<p>" + inlineMarkdown(line.slice(2), refs) + "</p>");
         continue;
       }
       closeBq();
-      // Lists
-      const ul = line.match(/^\\s*[-*+]\\s+(.+)$/);
-      const ol = line.match(/^\\s*\\d+\\.\\s+(.+)$/);
+
+      // Task list (GFM) — leading marker + [ ] or [x]
+      const task = line.match(/^(\\s*)[-*+]\\s+\\[([ xX])\\]\\s+(.+)$/);
+      if (task) {
+        flushPara();
+        adjustListStack(task[1].length, "ul");
+        const checked = task[2].toLowerCase() === "x" ? " checked" : "";
+        out.push('<li class="task"><input type="checkbox" disabled' + checked + '> ' + inlineMarkdown(task[3], refs) + '</li>');
+        continue;
+      }
+
+      // Bulleted / ordered list — supports nesting via leading indent.
+      const ul = line.match(/^(\\s*)[-*+]\\s+(.+)$/);
+      const ol = line.match(/^(\\s*)\\d+\\.\\s+(.+)$/);
       if (ul) {
-        if (listKind !== "ul") { closeList(); out.push("<ul>"); listKind = "ul"; }
-        out.push("<li>" + inlineMarkdown(ul[1]) + "</li>");
+        flushPara();
+        adjustListStack(ul[1].length, "ul");
+        out.push("<li>" + inlineMarkdown(ul[2], refs) + "</li>");
         continue;
       }
       if (ol) {
-        if (listKind !== "ol") { closeList(); out.push("<ol>"); listKind = "ol"; }
-        out.push("<li>" + inlineMarkdown(ol[1]) + "</li>");
+        flushPara();
+        adjustListStack(ol[1].length, "ol");
+        out.push("<li>" + inlineMarkdown(ol[2], refs) + "</li>");
         continue;
       }
-      closeList();
-      if (line.trim() === "") continue;
-      out.push("<p>" + inlineMarkdown(line) + "</p>");
+
+      // Plain prose — accumulate into the current paragraph. Lazy
+      // continuation: a non-blank line right after a list / blockquote
+      // closes them first.
+      closeListAll();
+      paraBuf.push(line);
     }
-    closeList(); closeBq();
+
+    flushPara();
+    closeListAll();
+    closeBq();
     if (codeBuf !== null) {
-      out.push("<pre><code>" + escapeHtml(codeBuf.join("\\n")) + "</code></pre>");
+      const safe = codeLang.replace(/[^a-zA-Z0-9_+-]/g, "");
+      const cls = safe ? ' class="language-' + safe + '"' : "";
+      out.push("<pre><code" + cls + ">" + escapeHtml(codeBuf.join("\\n")) + "</code></pre>");
     }
     if (mathBuf !== null) {
       const tex = mathBuf.join("\\n");
