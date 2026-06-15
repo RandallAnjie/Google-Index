@@ -1,0 +1,19 @@
+{
+  "name": "goindex-extended",
+  "version": "0.5.0",
+  "private": true,
+  "description": "Google Drive index for Module Workers — paper-feel UI, inline Markdown, rconfig.json per-directory config.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:watch": "node build.mjs --watch",
+    "verify": "node build.mjs && node -e \"import('acorn').then(a=>a.parse(require('fs').readFileSync('dist/index.js','utf8'),{ecmaVersion:2022,sourceType:'module'}))\""
+  },
+  "devDependencies": {
+    "acorn": "^8.12.1",
+    "esbuild": "^0.28.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
