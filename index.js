@@ -685,13 +685,37 @@ body {
   animation: fadeIn 0.3s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-/* Breadcrumb fly-in on every navigation (toggled by JS via the
-   .enter class — remove + force-reflow + re-add to restart). */
+/* Breadcrumb segments fly in individually — only the parts that
+   differ from the previous path get the .enter class, so the prefix
+   stays anchored when you drill in / out one level. */
 @keyframes bcFly {
-  from { opacity: 0; transform: translateX(-14px); }
+  from { opacity: 0; transform: translateX(-12px); }
   to   { opacity: 1; transform: none; }
 }
-.breadcrumb.enter { animation: bcFly 0.42s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+.breadcrumb .enter { animation: bcFly 0.42s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+.breadcrumb .enter.d1 { animation-delay: 50ms; }
+.breadcrumb .enter.d2 { animation-delay: 100ms; }
+.breadcrumb .enter.d3 { animation-delay: 150ms; }
+
+/* Skeleton placeholder shown while a directory is being fetched.
+   No per-row stagger — just a single quiet pulse on the whole list. */
+.list.skeleton { animation: skelPulse 1.4s ease-in-out infinite; }
+.list.skeleton li {
+  cursor: default; pointer-events: none;
+  animation: none;
+}
+.list.skeleton li::before { display: none; }
+.list.skeleton li:hover { background: transparent; padding-left: 8px; }
+.skel-icon, .skel-line, .skel-meta {
+  background: var(--rule); border-radius: 4px; display: inline-block;
+}
+.skel-icon { width: 18px; height: 18px; flex-shrink: 0; }
+.skel-line { flex: 1; height: 12px; }
+.skel-meta { width: 60px; height: 10px; }
+@keyframes skelPulse {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 0.32; }
+}
 
 /* Per-row stagger entrance. JS sets --i (clamped to 18) so a 500-row
    directory still finishes its cascade in under half a second. */
@@ -701,7 +725,7 @@ body {
 }
 .list li {
   animation: liEnter 0.42s cubic-bezier(0.2, 0.7, 0.3, 1) both;
-  animation-delay: calc(var(--i, 0) * 22ms);
+  animation-delay: calc(var(--i, 0) * 40ms);
 }
 
 a:focus-visible, button:focus-visible, select:focus-visible {
@@ -785,16 +809,6 @@ const JS = `
   }
   function pathBase() { return "/" + getOrder() + ":"; }
 
-  /** Restart a CSS keyframe animation on an existing element.
-   *  Removing + re-adding the class is enough only if a layout flush
-   *  happens between the two — touching offsetWidth forces that. */
-  function playEnter(el, cls) {
-    if (!el) return;
-    el.classList.remove(cls);
-    void el.offsetWidth;
-    el.classList.add(cls);
-  }
-
   /** SPA-style directory navigation: pushState then re-run the list
    *  pipeline. Falls back to a full load if the target is for a
    *  different drive (different pathBase) so cross-drive switches
@@ -810,36 +824,88 @@ const JS = `
   }
   window.addEventListener("popstate", () => bootList());
 
+  // Tracks the previously rendered path so renderBreadcrumb can tell
+  // which segments are unchanged (no animation) vs new (fly-in). On
+  // first paint everything is "new", so the initial load still gets
+  // the entrance animation.
+  let _lastBcParts = null;
+
   // Breadcrumb renders the current path. Each segment is a link to
-  // its prefix, terminating in a non-link for the current dir.
+  // its prefix, terminating in a non-link for the current dir. Only
+  // segments that didn't exist in the previous render get .enter, so
+  // drilling down one level only animates the newly-arrived tail.
   function renderBreadcrumb(path) {
     const el = document.getElementById("breadcrumb");
     el.innerHTML = "";
     const parts = path.split("/").filter(Boolean);
+    // Common-prefix length against the previous breadcrumb. null
+    // (first render) → 0, which means everything animates in.
+    let common = 0;
+    if (_lastBcParts) {
+      const cap = Math.min(_lastBcParts.length, parts.length);
+      while (common < cap && _lastBcParts[common] === parts[common]) common++;
+    } else {
+      // First paint — let the root + the whole path animate together.
+      common = -1;
+    }
     const root = document.createElement("a");
     root.textContent = names[getOrder()] || "Drive";
     root.href = pathBase() + "/";
+    if (common < 0) root.className = "enter";
     el.appendChild(root);
     let acc = "";
+    let animSeq = 0;
     parts.forEach((p, i) => {
       const sep = document.createElement("span");
       sep.className = "sep";
       sep.textContent = " / ";
+      const isNew = i >= common;
+      // Stagger the new segments slightly so they cascade rather
+      // than landing all at once. Cap at d3 (CSS only defines 0/d1/d2/d3).
+      const delayCls = isNew ? (animSeq < 4 ? " d" + animSeq : "") : "";
+      if (isNew) { sep.classList.add("enter"); if (delayCls) sep.classList.add(delayCls.trim()); }
       el.appendChild(sep);
       acc += "/" + p;
-      const isLast = i === parts.length - 1 && path.endsWith("/") === false;
+      let leafEl;
       if (i < parts.length - 1 || path.endsWith("/")) {
-        const a = document.createElement("a");
-        a.textContent = decodeURIComponent(p);
-        a.href = pathBase() + acc + "/";
-        el.appendChild(a);
+        leafEl = document.createElement("a");
+        leafEl.textContent = decodeURIComponent(p);
+        leafEl.href = pathBase() + acc + "/";
       } else {
-        const span = document.createElement("span");
-        span.textContent = decodeURIComponent(p);
-        el.appendChild(span);
+        leafEl = document.createElement("span");
+        leafEl.textContent = decodeURIComponent(p);
       }
+      if (isNew) {
+        leafEl.classList.add("enter");
+        if (delayCls) leafEl.classList.add(delayCls.trim());
+        animSeq++;
+      }
+      el.appendChild(leafEl);
     });
-    playEnter(el, "enter");
+    _lastBcParts = parts;
+  }
+
+  /** Paint a few pulsing placeholder rows while a directory is being
+   *  fetched. Random widths so the rows don't look mechanically equal. */
+  function showSkeleton() {
+    const content = document.getElementById("content");
+    const ul = document.createElement("ul");
+    ul.className = "list skeleton";
+    const widths = [78, 52, 65, 41, 70];
+    widths.forEach((w) => {
+      const li = document.createElement("li");
+      const icon = document.createElement("span");
+      icon.className = "skel-icon";
+      const line = document.createElement("span");
+      line.className = "skel-line";
+      line.style.maxWidth = w + "%";
+      const meta = document.createElement("span");
+      meta.className = "skel-meta";
+      li.append(icon, line, meta);
+      ul.appendChild(li);
+    });
+    content.innerHTML = "";
+    content.appendChild(ul);
   }
 
   // Icon glyph by file extension — keeps the list scannable without
@@ -1030,6 +1096,7 @@ const JS = `
   async function bootList() {
     const path = currentPath();
     renderBreadcrumb(path);
+    showSkeleton();
     try {
       const r = await fetchList(path);
       const items = r.data ? r.data.files : (r.files || []);
