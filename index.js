@@ -68,6 +68,29 @@ function parseRoots(raw) {
       protect_file_link: !!r.protect_file_link,
     }));
   } catch (e) {
+    // Operator-only diagnostic: dump the first 80 bytes (with each
+    // char's code point) into stderr. This goes to the worker
+    // dashboard log, NOT into the public-facing "unconfigured" page,
+    // so any auth credentials stay private. Lets us tell at a
+    // glance whether the host platform double-escaped the value
+    // (literal `\` chars at positions 2,8,…) or shipped some other
+    // shape entirely.
+    try {
+      const head = String(raw).slice(0, 80);
+      const codes = [];
+      for (let i = 0; i < head.length; i++) {
+        codes.push(head.charCodeAt(i).toString(16).padStart(2, "0"));
+      }
+      console.error(
+        "[goindex] ROOTS parse fail · typeof=" + (typeof raw) +
+        " · length=" + (typeof raw === "string" ? raw.length : "n/a") +
+        " · head=" + JSON.stringify(head) +
+        " · hex=" + codes.join(" "),
+      );
+    } catch (_) {
+      // best-effort; the throw below is what the operator sees on
+      // the public page.
+    }
     throw new Error(`ROOTS binding is not valid JSON: ${e.message}`);
   }
 }
@@ -738,11 +761,136 @@ const JS = `
     renderBreadcrumb(path);
     try {
       const r = await fetchList(path);
-      renderList(r.data ? r.data.files : (r.files || []));
+      const items = r.data ? r.data.files : (r.files || []);
+      renderList(items);
+      // GitHub-style behaviour: if the directory holds a README,
+      // render it under the file list as a rich preview. Matches
+      // case-insensitively (Drive treats names case-sensitively
+      // but humans don't) and tolerates the common variants —
+      // README / README.md / README.markdown / README.mkd /
+      // README.txt — picking the first hit in listing order.
+      const readme = items.find((f) =>
+        f && f.name &&
+        /^readme(\.(md|markdown|mkd|txt))?$/i.test(f.name) &&
+        f.mimeType !== "application/vnd.google-apps.folder"
+      );
+      if (readme) renderReadme(readme, path);
     } catch (e) {
       document.getElementById("content").innerHTML =
         '<div class="error">failed to load — ' + e.message + '</div>';
     }
+  }
+
+  /** Fetch the directory's README.md and append a rendered preview
+   *  below the file list. Inline-mode (?inline=true) so the worker
+   *  returns the bytes directly rather than triggering a download. */
+  async function renderReadme(file, dirPath) {
+    const url = pathBase() + dirPath + encodeURIComponent(file.name) + "?inline=true";
+    let text = "";
+    try {
+      text = await (await fetch(url)).text();
+    } catch { return; }
+    if (!text.trim()) return;
+    const box = document.createElement("section");
+    box.className = "markdown";
+    box.innerHTML = renderMarkdown(text);
+    document.getElementById("content").appendChild(box);
+  }
+
+  /** Minimal Markdown → HTML renderer. Covers headings, fenced
+   *  code, blockquotes, bullets, numbered lists, inline emph/strong/
+   *  code, links, images, hr. Each line is processed in order;
+   *  every text segment is HTML-escaped before any markup gets
+   *  reinserted, so untrusted README contents can't inject
+   *  <script>. The renderer is deliberately not a CommonMark
+   *  conformance project — it just has to look good for the
+   *  README-in-a-Drive-folder case the operator asked for. */
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+  function inlineMarkdown(s) {
+    s = escapeHtml(s);
+    // Images before links (link syntax is a subset of image syntax).
+    s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,
+      '<img alt="$1" src="$2" loading="lazy">');
+    s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+    s = s.replace(/(^|[\s(])\*([^*\s][^*]*[^*\s]|\S)\*/g, "$1<em>$2</em>");
+    s = s.replace(/(^|[\s(])_([^_\s][^_]*[^_\s]|\S)_/g, "$1<em>$2</em>");
+    return s;
+  }
+  function renderMarkdown(src) {
+    const out = [];
+    let codeBuf = null;
+    let listKind = null; // "ul" | "ol" | null
+    let inBlockquote = false;
+    const closeList = () => { if (listKind) { out.push("</" + listKind + ">"); listKind = null; } };
+    const closeBq = () => { if (inBlockquote) { out.push("</blockquote>"); inBlockquote = false; } };
+    for (const raw of src.split("\n")) {
+      const line = raw.replace(/\r$/, "");
+      // Code fence (open / close)
+      if (line.startsWith("```")) {
+        if (codeBuf === null) {
+          closeList(); closeBq();
+          codeBuf = [];
+        } else {
+          out.push("<pre><code>" + escapeHtml(codeBuf.join("\n")) + "</code></pre>");
+          codeBuf = null;
+        }
+        continue;
+      }
+      if (codeBuf !== null) { codeBuf.push(line); continue; }
+      // Horizontal rule
+      if (/^-{3,}\s*$/.test(line) || /^\*{3,}\s*$/.test(line) || /^_{3,}\s*$/.test(line)) {
+        closeList(); closeBq();
+        out.push("<hr>");
+        continue;
+      }
+      // Header
+      const hm = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+      if (hm) {
+        closeList(); closeBq();
+        out.push("<h" + hm[1].length + ">" + inlineMarkdown(hm[2]) + "</h" + hm[1].length + ">");
+        continue;
+      }
+      // Blockquote
+      if (line.startsWith("> ")) {
+        closeList();
+        if (!inBlockquote) { out.push("<blockquote>"); inBlockquote = true; }
+        out.push("<p>" + inlineMarkdown(line.slice(2)) + "</p>");
+        continue;
+      }
+      closeBq();
+      // Lists
+      const ul = line.match(/^\s*[-*+]\s+(.+)$/);
+      const ol = line.match(/^\s*\d+\.\s+(.+)$/);
+      if (ul) {
+        if (listKind !== "ul") { closeList(); out.push("<ul>"); listKind = "ul"; }
+        out.push("<li>" + inlineMarkdown(ul[1]) + "</li>");
+        continue;
+      }
+      if (ol) {
+        if (listKind !== "ol") { closeList(); out.push("<ol>"); listKind = "ol"; }
+        out.push("<li>" + inlineMarkdown(ol[1]) + "</li>");
+        continue;
+      }
+      closeList();
+      if (line.trim() === "") continue;
+      out.push("<p>" + inlineMarkdown(line) + "</p>");
+    }
+    closeList(); closeBq();
+    if (codeBuf !== null) {
+      out.push("<pre><code>" + escapeHtml(codeBuf.join("\n")) + "</code></pre>");
+    }
+    return out.join("\n");
   }
 
   async function bootSearch() {
@@ -1001,6 +1149,18 @@ class googleDrive {
   }
 
   async down(id, mimeType, range = "", inline = false) {
+    // Belt-and-braces: if the caller somehow handed us a raw
+    // shortcut (file() / _listFolder already normalise, but operator-
+    // injected paths via id2path / direct ID lookups might not),
+    // resolve to the target now so Drive's /files/{id}?alt=media
+    // doesn't 400 on a "shortcut isn't downloadable" error.
+    if (mimeType === CONSTS.shortcut_mime_type) {
+      const target = await this.findItemById(id);
+      if (target?.shortcutDetails) {
+        id = target.shortcutDetails.targetId;
+        mimeType = target.shortcutDetails.targetMimeType;
+      }
+    }
     if (mimeType.startsWith("application/vnd.google-apps")) {
       // Workspace doc — redirect to Google's export endpoint with the
       // operator's preferred extension.
@@ -1041,7 +1201,7 @@ class googleDrive {
     const accessToken = await this.accessToken();
     const resp = await fetch(requestUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
     const obj = await resp.json();
-    this.files[path] = obj.files?.[0];
+    this.files[path] = resolveShortcut(obj.files?.[0]);
     return this.files[path];
   }
 
@@ -1085,7 +1245,17 @@ class googleDrive {
     const url = "https://www.googleapis.com/drive/v3/files?" + this.enQuery(params);
     const accessToken = await this.accessToken();
     const resp = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-    return resp.json();
+    const obj = await resp.json();
+    // Normalise shortcuts so the rendered list shows the target's
+    // real type (folder → "▸", file → its extension) and downstream
+    // code can stay shortcut-unaware. orderBy=folder above sorts
+    // by raw mimeType; shortcuts-to-folders end up grouped with
+    // regular files in the API response, then renderList re-sorts
+    // them under "folders first" once their mimeType is swapped.
+    if (Array.isArray(obj.files)) {
+      obj.files = obj.files.map(resolveShortcut);
+    }
+    return obj;
   }
 
   async search(text, page_token = null, page_index = 0) {
@@ -1156,16 +1326,27 @@ class googleDrive {
 
   async _findChild(parent, name) {
     const url = "https://www.googleapis.com/drive/v3/files";
+    // Search for either an actual folder OR a shortcut whose target
+    // is a folder. The "is the target a folder" check happens after
+    // the API hands us the row + shortcutDetails — Drive's query
+    // language can't filter on shortcutDetails.targetMimeType.
     const params = {
       includeItemsFromAllDrives: true,
       supportsAllDrives: true,
-      q: `'${parent}' in parents and name = '${name.replace(/'/g, "\\'")}' and mimeType = '${CONSTS.folder_mime_type}' and trashed = ${this.authConfig.include_trashed_files}`,
-      fields: "files(id,name)",
+      q: `'${parent}' in parents and name = '${name.replace(/'/g, "\\'")}' and (mimeType = '${CONSTS.folder_mime_type}' or mimeType = '${CONSTS.shortcut_mime_type}') and trashed = ${this.authConfig.include_trashed_files}`,
+      fields: "files(id,name,mimeType,shortcutDetails)",
     };
     const accessToken = await this.accessToken();
     const resp = await fetch(url + "?" + this.enQuery(params), { headers: { Authorization: `Bearer ${accessToken}` } });
     const obj = await resp.json();
-    return obj.files?.[0];
+    const raw = obj.files?.[0];
+    if (!raw) return null;
+    const resolved = resolveShortcut(raw);
+    // A shortcut to a *file* matches the OR query above but isn't
+    // a usable folder-step — reject so path traversal doesn't end
+    // up trying to list a file as if it were a directory.
+    if (resolved.mimeType !== CONSTS.folder_mime_type) return null;
+    return resolved;
   }
 
   async findItemById(id) {
@@ -1286,7 +1467,34 @@ const FUNCS = {
 };
 
 const CONSTS = {
-  default_file_fields: "parents,id,name,mimeType,modifiedTime,createdTime,fileExtension,size",
+  // shortcutDetails added so the listing knows what the shortcut
+  // points at without a second round-trip — see resolveShortcut()
+  // for the inline normalisation that swaps the shortcut's surface
+  // for its target's id + mime so downstream code (icon picking,
+  // folder traversal, download) can stay shortcut-unaware.
+  default_file_fields: "parents,id,name,mimeType,modifiedTime,createdTime,fileExtension,size,shortcutDetails",
   gd_root_type: { user_drive: 0, share_drive: 1, sub_folder: 2 },
   folder_mime_type: "application/vnd.google-apps.folder",
+  shortcut_mime_type: "application/vnd.google-apps.shortcut",
 };
+
+/** Swap a Drive shortcut item for its target — i.e. rewrite `id`
+ *  and `mimeType` to the shortcutDetails values so everything
+ *  downstream (icon picking, "is it a folder", URL building,
+ *  download) operates on the *real* object the user expects.
+ *  Original ids are preserved on `_shortcutId` / `_shortcutMime`
+ *  for diagnostics and in case we ever want to render a tiny
+ *  badge in the UI. */
+function resolveShortcut(item) {
+  if (!item) return item;
+  if (item.mimeType === CONSTS.shortcut_mime_type && item.shortcutDetails) {
+    return {
+      ...item,
+      _shortcutId: item.id,
+      _shortcutMime: item.mimeType,
+      id: item.shortcutDetails.targetId,
+      mimeType: item.shortcutDetails.targetMimeType,
+    };
+  }
+  return item;
+}
