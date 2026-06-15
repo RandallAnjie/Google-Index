@@ -21,6 +21,7 @@ import { apiRequest } from "./handlers/list.js";
 import { handleSearch } from "./handlers/search.js";
 import { handleId2Path } from "./handlers/id2path.js";
 import { handleAuth } from "./handlers/auth.js";
+import { handleUpload } from "./handlers/upload.js";
 
 const state = { gds: [] };
 
@@ -92,13 +93,16 @@ export async function handleRequest(request, config) {
         { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } },
       );
     }
-    // POST endpoints (search, id2path) gated by the cookie / header
-    // basic-auth check.
+    // POST endpoints (search, id2path, _upload) gated by the cookie /
+    // header basic-auth check.
     const basic_auth_res = gd.basicAuthResponse(request);
     if (basic_auth_res) return basic_auth_res;
     if (command === "search") return handleSearch(request, gd);
     if (command === "id2path" && request.method === "POST") {
       return handleId2Path(request, gd);
+    }
+    if (command === "_upload" && request.method === "POST") {
+      return handleUpload(request, gd);
     }
   }
 

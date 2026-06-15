@@ -8,6 +8,7 @@ import { navigateTo, installPopstate } from "./nav.js";
 import { bootList } from "./list.js";
 import { bootSearch } from "./search.js";
 import { buildDrivePicker } from "./drive-picker.js";
+import { showUploadModal } from "./upload-modal.js";
 
 const root = document.documentElement;
 
@@ -64,6 +65,25 @@ document.getElementById("breadcrumb").addEventListener("click", (e) => {
 });
 
 installPopstate();
+
+// Upload — only meaningful on listing pages (search results don't
+// have a "current directory" to upload into). Click on the toolbar
+// button pops the hidden file input; once a file lands the upload
+// modal takes over and refreshes the listing on success.
+const uploadBtn = document.getElementById("upload-btn");
+const uploadInput = document.getElementById("upload-input");
+if (init.isSearchPage) {
+  uploadBtn.hidden = true;
+} else {
+  uploadBtn.addEventListener("click", () => uploadInput.click());
+  uploadInput.addEventListener("change", () => {
+    const file = uploadInput.files && uploadInput.files[0];
+    // Reset the input so picking the same file twice in a row still
+    // fires a change event.
+    uploadInput.value = "";
+    if (file) showUploadModal(file, () => bootList());
+  });
+}
 
 if (init.isSearchPage) bootSearch();
 else bootList();

@@ -173,13 +173,15 @@ body {
   outline: none; border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-#theme-toggle {
+#theme-toggle, #upload-btn {
   background: transparent; border: none;
   color: var(--ink-sub); cursor: pointer;
   padding: 4px 8px; font-size: 1.1rem; line-height: 1;
   transition: color 0.15s, transform 0.25s;
 }
 #theme-toggle:hover { color: var(--accent); transform: rotate(180deg); }
+#upload-btn { font-weight: 600; }
+#upload-btn:hover { color: var(--accent); transform: translateY(-2px); }
 
 /* breadcrumb */
 .breadcrumb {
@@ -561,6 +563,55 @@ body.modal-open { overflow: hidden; }
 }
 .auth-submit:hover:not(:disabled) { transform: translateY(-1px); }
 .auth-submit:disabled { opacity: 0.55; cursor: progress; }
+
+/* Upload modal — file name + size + progress bar + cancel. */
+.upload-modal { width: min(440px, 100%); }
+.upload-body { padding: 22px 26px 24px; }
+.upload-name {
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  color: var(--ink);
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+.upload-meta {
+  font-size: 0.82rem;
+  color: var(--ink-sub);
+  margin-bottom: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.upload-bar {
+  height: 8px;
+  background: var(--bg-sub);
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+}
+.upload-bar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.upload-bar.done .upload-bar-fill { background: #2ecc71; }
+.upload-bar.failed .upload-bar-fill { background: #c0392b; }
+.upload-status {
+  margin-top: 12px;
+  font-size: 0.85rem;
+  color: var(--ink-sub);
+  font-variant-numeric: tabular-nums;
+}
+.upload-error {
+  margin-top: 12px;
+  font-size: 0.85rem;
+  color: #c0392b;
+  background: rgba(192, 57, 43, 0.07);
+  border: 1px solid rgba(192, 57, 43, 0.22);
+  border-radius: 6px;
+  padding: 8px 12px;
+  animation: fadeIn 0.2s ease-out;
+}
 
 /* markdown — essay-like */
 .markdown {

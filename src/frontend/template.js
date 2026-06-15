@@ -43,7 +43,9 @@ export function renderShell(authConfig, uiConfig, current_drive_order = 0, model
       <form id="search-form" role="search">
         <input id="search-input" type="search" placeholder="Search this drive…" autocomplete="off">
       </form>
+      <button id="upload-btn" type="button" aria-label="upload file" title="上传文件">↑</button>
       <button id="theme-toggle" type="button" aria-label="toggle theme">◐</button>
+      <input id="upload-input" type="file" hidden>
     </header>
     <nav id="breadcrumb" class="breadcrumb"></nav>
     <main id="content" class="content">
