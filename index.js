@@ -1043,29 +1043,7 @@ const JS = `
     const isFolder = (f) => f.mimeType === "application/vnd.google-apps.folder";
     const folders = items.filter(isFolder);
     const files = items.filter((f) => !isFolder(f));
-    let ordered = [...folders, ...files];
-    const rconf = opts.rconf || null;
-    const descMap = rconf ? rconf.desc : {};
-    const pinned = rconf ? rconf.pinned : [];
-
-    // Pinned ordering: anything listed in rconf.pinned floats to the
-    // top in the order given, then everything else stays in the
-    // folders-first sort. Both \`name\` and \`name/\` keys accepted.
-    if (pinned && pinned.length) {
-      const pinIdx = (f) => {
-        const k = isFolder(f) ? f.name + "/" : f.name;
-        let p = pinned.indexOf(k);
-        if (p < 0) p = pinned.indexOf(f.name);
-        return p;
-      };
-      ordered.sort((a, b) => {
-        const ia = pinIdx(a), ib = pinIdx(b);
-        if (ia >= 0 && ib >= 0) return ia - ib;
-        if (ia >= 0) return -1;
-        if (ib >= 0) return 1;
-        return 0;
-      });
-    }
+    const ordered = [...folders, ...files];
 
     const ul = document.createElement("ul");
     ul.className = "list";
@@ -1073,6 +1051,10 @@ const JS = `
       const li = document.createElement("li");
       const folder = isFolder(f);
       li.className = folder ? "folder" : "file";
+      // data-name lets applyRconf() locate this row later when the
+      // async rconfig.json fetch lands, so it can attach desc, hide,
+      // pin, etc. without re-rendering the whole list.
+      li.dataset.name = f.name;
       // Clamp the stagger index so directories with hundreds of rows
       // don't make the last item wait several seconds for its turn.
       li.style.setProperty("--i", String(Math.min(idx, 18)));
@@ -1082,20 +1064,6 @@ const JS = `
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = f.name;
-      // Per-entry annotation from rconfig.desc. Folder keys may
-      // carry a trailing slash; bare-name match works too.
-      const descKey = folder ? (f.name + "/") : f.name;
-      const annotation = (descMap && (descMap[descKey] || descMap[f.name])) || "";
-      if (annotation) {
-        const tag = document.createElement("small");
-        tag.className = "desc";
-        tag.textContent = " · " + annotation;
-        name.appendChild(tag);
-      }
-      // Pinned marker — small dot rendered via CSS ::after.
-      if (pinned && (pinned.indexOf(descKey) >= 0 || pinned.indexOf(f.name) >= 0)) {
-        li.classList.add("pinned");
-      }
       const size = document.createElement("span");
       size.className = "meta";
       size.textContent = fmtSize(f.size);
@@ -1275,66 +1243,142 @@ const JS = `
     const skelTimer = setTimeout(() => showSkeleton(), 200);
     try {
       const r = await fetchList(path);
+      clearTimeout(skelTimer);
       const items = r.data ? r.data.files : (r.files || []);
       const isFolder = (f) => f.mimeType === "application/vnd.google-apps.folder";
 
-      // GitHub-style behaviour: if the directory holds a README,
-      // render it under the file list as a rich preview. Matches
-      // case-insensitively (Drive treats names case-sensitively
-      // but humans don't) and tolerates the common variants —
-      // README / README.md / README.markdown / README.mkd /
-      // README.txt — picking the first hit in listing order.
+      // README — case-insensitive, tolerates the common variants.
       const readmeEntry = items.find((f) =>
         f && f.name &&
         /^readme(\\.(md|markdown|mkd|txt))?$/i.test(f.name) &&
         !isFolder(f)
       );
-      // rconfig.json — per-directory config (annotations, hide list,
-      // pinned order, accent override, intro, cover, links). Fetched
-      // inline after the list lands so a missing / 404 file doesn't
-      // delay the listing.
+      // rconfig.json — fetched in *parallel* with the first render
+      // so the list paints immediately and the config-driven tweaks
+      // (desc, hide, pin, accent, header) layer on as soon as the
+      // JSON lands.
       const rconfEntry = items.find((f) =>
         f && f.name && f.name.toLowerCase() === "rconfig.json" && !isFolder(f)
       );
-      let rconf = null;
-      if (rconfEntry) {
-        try {
-          const url = pathBase() + path + encodeURIComponent(rconfEntry.name) + "?inline=true";
-          const txt = await (await fetch(url)).text();
-          rconf = readRconf(JSON.parse(txt));
-        } catch (_) { /* swallow — bad JSON shouldn't break the listing */ }
-      }
-      clearTimeout(skelTimer);
 
-      // Hide rconfig.json + README itself + anything in rconf.hide
-      // before handing the list off to renderList.
-      const hidden = new Set();
-      if (rconfEntry) hidden.add(rconfEntry.name);
-      if (readmeEntry) hidden.add(readmeEntry.name);
-      if (rconf) rconf.hide.forEach((n) => hidden.add(n));
-      const visible = items.filter((f) => !hidden.has(f.name));
+      // First-pass hide: README + rconfig.json themselves. Whatever
+      // rconf.hide adds will be removed later by applyRconf().
+      const initialHidden = new Set();
+      if (rconfEntry) initialHidden.add(rconfEntry.name);
+      if (readmeEntry) initialHidden.add(readmeEntry.name);
+      const visible = items.filter((f) => !initialHidden.has(f.name));
 
-      // One clear point: bootList wipes #content, then this function
-      // appends in order — dir-header → list → README.
-      content.innerHTML = "";
-      // Per-directory accent override (reset to the env accent if
-      // rconf doesn't specify one, so we don't leak the previous
-      // directory's accent into this one).
+      // Reset accent to the env default; applyRconf() will override
+      // again if rconf specifies one. Without this, navigating from a
+      // directory with an accent override to one without would leak
+      // the colour forwards.
       const docRoot = document.documentElement;
-      if (rconf && rconf.accent) {
-        docRoot.style.setProperty("--accent", rconf.accent);
-      } else if (ui.accent) {
-        docRoot.style.setProperty("--accent", ui.accent);
-      } else {
-        docRoot.style.removeProperty("--accent");
-      }
-      const header = renderDirHeader(rconf);
-      if (header) content.appendChild(header);
-      renderList(visible, { append: true, rconf });
+      if (ui.accent) docRoot.style.setProperty("--accent", ui.accent);
+      else docRoot.style.removeProperty("--accent");
+
+      // Single clear, then render in order: list → README. dir-header
+      // is inserted by applyRconf() once the config arrives.
+      content.innerHTML = "";
+      renderList(visible, { append: true });
       if (readmeEntry) renderReadme(readmeEntry, path);
+
+      // Fire-and-forget rconfig fetch. The list is already on screen
+      // so a slow / failed fetch can't block anything; on success we
+      // enhance the existing DOM in place.
+      if (rconfEntry) {
+        const url = pathBase() + path + encodeURIComponent(rconfEntry.name) + "?inline=true";
+        fetch(url)
+          .then((res) => res.text())
+          .then((txt) => {
+            let rconf = null;
+            try { rconf = readRconf(JSON.parse(txt)); }
+            catch (_) { return; /* malformed JSON — skip silently */ }
+            if (rconf) applyRconf(rconf, content);
+          })
+          .catch(() => { /* network blip — leave the list as-is */ });
+      }
     } catch (e) {
       clearTimeout(skelTimer);
       content.innerHTML = '<div class="error">failed to load — ' + e.message + '</div>';
+    }
+  }
+
+  /** Mutate the already-painted list to reflect rconfig.json: insert
+   *  the dir-header, attach descriptions, remove hidden rows, mark
+   *  and reorder pinned rows, override accent. We touch the existing
+   *  <li> nodes in place rather than re-rendering, so the visitor
+   *  doesn't see a flash / reflow when the config arrives. */
+  function applyRconf(rconf, content) {
+    if (!rconf) return;
+    // Accent override (only on positive set — env default already
+    // applied by bootList).
+    if (rconf.accent) {
+      document.documentElement.style.setProperty("--accent", rconf.accent);
+    }
+    // dir-header goes above the file list (or above the README if
+    // somehow the list isn't there yet).
+    const header = renderDirHeader(rconf);
+    const ul = content.querySelector(".list");
+    if (header) {
+      if (ul) content.insertBefore(header, ul);
+      else content.prepend(header);
+    }
+    if (!ul) return;
+
+    // Index existing rows so we can match by name in O(1).
+    const byName = new Map();
+    Array.from(ul.children).forEach((li) => {
+      if (li.dataset && li.dataset.name) byName.set(li.dataset.name, li);
+    });
+    const lookup = (raw) => {
+      const cleaned = raw.replace(/\\/$/, "");
+      return byName.get(raw) || byName.get(cleaned) || null;
+    };
+
+    // Extra hides from rconf.hide.
+    rconf.hide.forEach((name) => {
+      const li = lookup(name);
+      if (li) { li.remove(); byName.delete(li.dataset.name); }
+    });
+
+    // Description annotations. Skip if the row already has one
+    // (shouldn't happen since renderList doesn't add them anymore,
+    // but cheap to guard).
+    Object.keys(rconf.desc).forEach((rawKey) => {
+      const li = lookup(rawKey);
+      const val = rconf.desc[rawKey];
+      if (!li || !val) return;
+      const nameEl = li.querySelector(".name");
+      if (!nameEl || nameEl.querySelector(".desc")) return;
+      const tag = document.createElement("small");
+      tag.className = "desc";
+      tag.textContent = " · " + String(val);
+      nameEl.appendChild(tag);
+    });
+
+    // Pinned: mark + reorder. moving an <li> within the same parent
+    // doesn't re-trigger its entrance animation, so no flicker.
+    if (rconf.pinned.length) {
+      const order = rconf.pinned.map((k) => k.replace(/\\/$/, ""));
+      const inOrder = new Set(order);
+      order.forEach((name) => {
+        const li = byName.get(name);
+        if (li) li.classList.add("pinned");
+      });
+      const allLis = Array.from(ul.children);
+      allLis.sort((a, b) => {
+        const an = a.dataset && a.dataset.name;
+        const bn = b.dataset && b.dataset.name;
+        const ai = order.indexOf(an);
+        const bi = order.indexOf(bn);
+        if (ai >= 0 && bi >= 0) return ai - bi;
+        if (ai >= 0) return -1;
+        if (bi >= 0) return 1;
+        return 0; // preserve original folders-first ordering for the rest
+      });
+      // Re-attach in sorted order. appendChild on an existing node
+      // moves it without dropping listeners.
+      allLis.forEach((li) => ul.appendChild(li));
     }
   }
 
