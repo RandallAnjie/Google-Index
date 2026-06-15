@@ -1,22 +1,35 @@
 # goindex-extended
 
-A Google Drive index served from a single Workers-runtime script.
-Refactored from the upstream [`cheems/goindex-extended`](https://github.com/cheems/goindex-extended) for
-deployment on [RandallFlare](https://bigrandall.io) (or any host that
-speaks the Module Worker contract — Cloudflare Workers / Cloudflare
-Pages Functions / workerd directly).
+A Google Drive index served by a single Workers script. One file,
+one binding panel, no CDN dependency. Browse the tree, preview
+images / video / audio / PDFs / text inline, search across a drive,
+and serve the whole thing on a custom hostname.
 
-Two things changed from upstream:
+Forked from [`cheems/goindex-extended`](https://github.com/cheems/goindex-extended)
+and re-cut for [RandallFlare](https://bigrandall.io) — or any
+runtime that speaks the Module Worker contract (Cloudflare Workers,
+Cloudflare Pages Functions, workerd directly).
 
-- **Every secret reads from the runtime env binding panel.** No more
-  pasting `refresh_token` into `index.js` and committing it to a
-  public repo.
+## What changed from upstream
+
+- **All secrets read from the runtime env panel.** No more pasting
+  `refresh_token` into `index.js` and committing it to a public
+  repo.
 - **The frontend is rewritten from scratch.** ~10 KB of vanilla
-  JS + CSS inlined into the worker. No jsdelivr CDN dependency,
-  no Vue / Material UI bundle, no offline regressions when the CDN
-  is slow. Clean list view, breadcrumbs, search, inline preview
-  for images / video / audio / PDF / text, dark mode persisted
-  to `localStorage`.
+  JS + CSS, inlined into the worker. No jsdelivr fetch, no Vue /
+  Material UI bundle, no offline regressions when the CDN flaps.
+  Clean list view, breadcrumbs, search, inline preview for
+  images / video / audio / PDF / text, dark mode persisted to
+  `localStorage`.
+- **README.md auto-render.** A directory holding a `readme.md`
+  paints the rendered Markdown under the file list, the GitHub
+  way. Inline parser, no marked.js bundle pulled in.
+- **Google Drive shortcuts handled inline.** A `application/vnd.google-apps.shortcut`
+  pointing at a folder behaves like the target folder; one
+  pointing at a file behaves like the target file. Path traversal,
+  icon picking, download — all stay shortcut-unaware because the
+  listing pipeline swaps the row's `id` + `mimeType` for the
+  target's before the rest of the code ever sees it.
 
 The Google Drive client itself (token refresh, paginated listing,
 share-drive vs sub-folder root resolution, byte-range download
@@ -24,21 +37,28 @@ proxying for video, Workspace doc export) is essentially intact —
 that logic has years of edge-case fixes baked in and the refactor
 deliberately stays out of its way.
 
-## What you get
+## Highlights
 
-A site that mounts one or more Google Drive folders behind a single
-hostname. Visitors browse the file tree, watch video / listen to
-audio inline, or download. Optional HTTP Basic Auth per drive.
-Search across the current drive.
+- Single-file deployable worker (no build step required).
+- Multiple drives behind one host via `ROOTS` JSON.
+- Per-drive HTTP Basic Auth, optional per-file gate.
+- Per-directory `.password` files honoured when enabled.
+- Range-aware byte streaming for video / large audio.
+- Workspace docs export with a configurable preferred extension.
+- Search scoped to the active drive (degrades to whole-drive on
+  sub-folder roots — a Drive API limitation, not ours).
+- Markdown render + shortcut transparency out of the box.
 
 ## Deploy on RandallFlare
 
 1. Create a Workers project on your RandallFlare plane.
-2. Set the git source to a fork of this repo (or this repo).
-3. Set the runtime env bindings (panel: **runtime env vars** on
-   the Worker edit page). The required + optional list is in the
-   next section.
+2. Point the git source at this repo (or a fork).
+3. Fill the runtime env bindings (panel → **runtime env vars**)
+   from the tables below.
 4. Save. The worker auto-builds + publishes on the next push.
+
+That's it. No `wrangler.toml`, no separate frontend deploy, no
+build step — the source you see is the source the worker runs.
 
 ## Required env bindings
 
@@ -147,6 +167,40 @@ them, and they're stable for anyone wiring up an external client.
 - `POST /<n>:id2path` (form-encoded body `id`) → plain text path
   for the file with that Drive ID (used to render breadcrumbs on
   search results).
+
+## Behavioural notes
+
+### README.md rendering
+
+When a directory's listing contains a file named `readme.md` (case-
+insensitive), the rendered preview is appended below the file list.
+The Markdown is fetched through the same `?inline=true` path the
+inline text preview uses, so per-drive Basic Auth applies as
+expected.
+
+Supported syntax — headings, fenced code, blockquotes, ordered /
+unordered lists, links, images, inline strong / em / code, horizontal
+rules. Every text segment HTML-escapes before any markup is
+reinserted, so a hostile README can't inject `<script>`. Not a
+CommonMark conformance project — just a sensible "this looks
+like a README on GitHub" surface.
+
+### Shortcut transparency
+
+Drive shortcuts (`application/vnd.google-apps.shortcut`) are
+swapped to their targets at the listing layer. The `id` + `mimeType`
+the rest of the worker sees belong to the target; the original
+shortcut id is parked on `_shortcutId` / `_shortcutMime` for
+diagnostics. Practically:
+
+- Shortcut → folder: clicking it enters the folder; breadcrumb uses
+  the target id.
+- Shortcut → file: clicking it previews / downloads the file.
+- `down()` carries a defensive fallback for the rare case a raw
+  shortcut id makes it through (e.g. an external `id2path` call) —
+  the target is resolved once before `?alt=media` is requested, so
+  Drive's "shortcuts aren't downloadable" 400 never reaches the
+  client.
 
 ## What's intentionally gone
 
