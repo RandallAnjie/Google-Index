@@ -617,40 +617,112 @@ body {
   background: var(--accent-soft);
 }
 
-/* preview */
-.preview {
-  margin-top: 28px; padding: 22px 24px;
-  border: 1px solid var(--rule); border-radius: 10px;
+/* preview modal — full-screen backdrop with a centred card */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  animation: backdropIn 0.22s ease-out;
+}
+.modal-backdrop.closing { animation: backdropOut 0.18s ease-in forwards; }
+@keyframes backdropIn  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes backdropOut { from { opacity: 1; } to { opacity: 0; } }
+
+.modal {
   background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  width: min(940px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.22),
+    0 4px 12px rgba(0, 0, 0, 0.10);
+  animation: modalIn 0.32s cubic-bezier(0.2, 0.7, 0.3, 1) both;
 }
-.preview h2 {
+.modal-backdrop.closing .modal { animation: modalOut 0.18s cubic-bezier(0.4, 0, 0.6, 1) forwards; }
+@keyframes modalIn  {
+  from { opacity: 0; transform: scale(0.96) translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes modalOut {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: scale(0.97) translateY(6px); }
+}
+
+.modal-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px dashed var(--rule);
+  background: var(--bg);
+}
+.modal-head h2 {
+  flex: 1; min-width: 0;
+  margin: 0;
   font-family: var(--serif);
-  font-size: 0.98rem; font-weight: 500; font-style: italic;
-  margin: 0 0 16px; color: var(--ink-sub);
+  font-size: 1.02rem; font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.preview .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
-.preview .actions a {
+.modal-close {
+  background: none; border: none;
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.4rem; line-height: 1;
+  color: var(--ink-sub); cursor: pointer;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s, transform 0.25s;
+}
+.modal-close:hover {
+  color: var(--accent); background: var(--accent-soft);
+  transform: rotate(90deg);
+}
+
+.modal-body {
+  padding: 18px 20px 22px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+.modal-body .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.modal-body .actions a {
   display: inline-block; padding: 7px 18px;
-  font-size: 0.85rem; background: var(--ink); color: var(--bg);
+  font-size: 0.85rem;
+  background: var(--ink); color: var(--bg);
   border-radius: 999px; text-decoration: none;
   transition: transform 0.12s, background 0.15s;
 }
-.preview .actions a:hover { transform: translateY(-1px); }
-.preview .actions a.secondary {
+.modal-body .actions a:hover { transform: translateY(-1px); }
+.modal-body .actions a.secondary {
   background: transparent; color: var(--ink);
   border: 1px solid var(--rule);
 }
-.preview .actions a.secondary:hover {
+.modal-body .actions a.secondary:hover {
   border-color: var(--accent); color: var(--accent);
 }
-.preview img, .preview video { max-width: 100%; max-height: 70vh; border-radius: 6px; display: block; margin: 0 auto; }
-.preview img { object-fit: contain; background: var(--bg); }
-.preview audio { width: 100%; }
-.preview pre {
-  background: var(--bg); padding: 14px; border-radius: 6px;
+.modal-body img, .modal-body video {
+  max-width: 100%; max-height: 75vh;
+  border-radius: 8px;
+  display: block; margin: 0 auto;
+}
+.modal-body img { object-fit: contain; background: var(--bg); }
+.modal-body audio { width: 100%; }
+.modal-body iframe {
+  width: 100%; height: 72vh;
+  border: 1px solid var(--rule); border-radius: 8px;
+}
+.modal-body pre {
+  background: var(--bg); padding: 14px; border-radius: 8px;
   overflow: auto; font-size: 0.82rem; max-height: 70vh;
   font-family: var(--mono); border: 1px solid var(--rule);
+  margin: 0;
 }
+.modal-body .note { color: var(--ink-sub); font-style: italic; margin: 0; }
+
+body.modal-open { overflow: hidden; }
 
 /* markdown — essay-like */
 .markdown {
@@ -869,10 +941,14 @@ const JS = `
       location.href = url; return;
     }
     if (location.pathname === url) return;
+    closeModal();
     history.pushState({}, "", url);
     bootList();
   }
-  window.addEventListener("popstate", () => bootList());
+  window.addEventListener("popstate", () => {
+    closeModal();
+    bootList();
+  });
 
   // Tracks the previously rendered path so renderBreadcrumb can tell
   // which segments are unchanged (no animation) vs new (fly-in). On
@@ -1161,18 +1237,62 @@ const JS = `
   }
 
   // Preview pane — appended below the list, scrolls into view.
+  /** Keydown handler installed only while a modal is open. We hold
+   *  a reference so closeModal() can detach it cleanly. */
+  function _onModalKey(e) {
+    if (e.key === "Escape") closeModal();
+  }
+
+  /** Close the currently-open preview modal with a brief exit
+   *  animation. Idempotent — calling with no modal open is a no-op. */
+  function closeModal() {
+    const backdrop = document.querySelector(".modal-backdrop");
+    if (!backdrop || backdrop.classList.contains("closing")) return;
+    backdrop.classList.add("closing");
+    document.removeEventListener("keydown", _onModalKey);
+    // Match the longest exit animation duration (180ms) before
+    // detaching so the visitor sees the modal scale back out.
+    setTimeout(() => {
+      backdrop.remove();
+      document.body.classList.remove("modal-open");
+    }, 200);
+  }
+
   function openPreview(file, basePath) {
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     const url = pathBase() + basePath + encodeURIComponent(file.name);
     const inlineUrl = url + "?inline=true";
-    const content = document.getElementById("content");
-    const old = document.querySelector(".preview");
-    if (old) old.remove();
-    const box = document.createElement("section");
-    box.className = "preview";
+
+    // If a modal is already up, swap its body in place rather than
+    // chaining a second backdrop on top of the first. Cheap, avoids
+    // a flash.
+    const existing = document.querySelector(".modal-backdrop");
+    if (existing) existing.remove();
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    const modal = document.createElement("div");
+    modal.className = "modal";
+    backdrop.appendChild(modal);
+
+    // ── head: filename + close button
+    const head = document.createElement("header");
+    head.className = "modal-head";
     const title = document.createElement("h2");
     title.textContent = file.name;
-    box.appendChild(title);
+    head.appendChild(title);
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "modal-close";
+    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.addEventListener("click", closeModal);
+    head.appendChild(closeBtn);
+    modal.appendChild(head);
+
+    // ── body: action row + preview surface
+    const body = document.createElement("div");
+    body.className = "modal-body";
     const actions = document.createElement("div");
     actions.className = "actions";
     const dl = document.createElement("a");
@@ -1187,48 +1307,53 @@ const JS = `
     open.textContent = "Open in new tab";
     open.className = "secondary";
     actions.appendChild(open);
-    box.appendChild(actions);
+    body.appendChild(actions);
 
-    if (/^(jpe?g|png|gif|webp|svg|bmp)$/.test(ext)) {
+    if (/^(jpe?g|png|gif|webp|svg|bmp|avif)$/.test(ext)) {
       const img = document.createElement("img");
       img.src = inlineUrl;
       img.loading = "lazy";
-      box.appendChild(img);
+      body.appendChild(img);
     } else if (/^(mp4|webm|mkv|mov)$/.test(ext)) {
       const v = document.createElement("video");
       v.src = inlineUrl;
       v.controls = true;
       v.playsInline = true;
-      box.appendChild(v);
-    } else if (/^(mp3|flac|wav|ogg|m4a|aac)$/.test(ext)) {
+      body.appendChild(v);
+    } else if (/^(mp3|flac|wav|ogg|m4a|aac|opus)$/.test(ext)) {
       const a = document.createElement("audio");
       a.src = inlineUrl;
       a.controls = true;
-      box.appendChild(a);
+      body.appendChild(a);
     } else if (/^(pdf)$/.test(ext)) {
       const iframe = document.createElement("iframe");
       iframe.src = inlineUrl;
-      iframe.style.width = "100%";
-      iframe.style.height = "75vh";
-      iframe.style.border = "1px solid var(--rule)";
-      iframe.style.borderRadius = "6px";
-      box.appendChild(iframe);
-    } else if (/^(md|txt|js|ts|py|go|rs|java|c|cpp|sh|yaml|yml|json|html|css|log)$/.test(ext)) {
+      body.appendChild(iframe);
+    } else if (/^(md|txt|js|ts|py|go|rs|java|c|cpp|sh|yaml|yml|json|html|css|log|toml|ini|conf|rb|php|swift|kt|sql)$/.test(ext)) {
       const pre = document.createElement("pre");
       pre.textContent = "loading…";
-      box.appendChild(pre);
+      body.appendChild(pre);
       fetch(inlineUrl)
         .then((r) => r.text())
         .then((t) => { pre.textContent = t; })
         .catch(() => { pre.textContent = "(failed to load)"; });
     } else {
       const note = document.createElement("p");
-      note.style.color = "var(--ink-sub)";
+      note.className = "note";
       note.textContent = "no inline preview for this file type";
-      box.appendChild(note);
+      body.appendChild(note);
     }
-    content.appendChild(box);
-    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    modal.appendChild(body);
+
+    // Click-outside-card dismisses; clicks inside the card bubble
+    // up here too, so we only close when the target is the backdrop
+    // itself.
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop) closeModal();
+    });
+    document.addEventListener("keydown", _onModalKey);
+    document.body.classList.add("modal-open");
+    document.body.appendChild(backdrop);
   }
 
   // ── boot ────────────────────────────────────────────────────────
