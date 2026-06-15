@@ -59,8 +59,13 @@ export async function handleRequest(request, config) {
   if (path === "/") return redirectToIndexPage();
   if (path.toLowerCase() === "/favicon.ico") return new Response("", { status: 404 });
 
-  // /<n>:command (search, id2path)
-  const command_reg = /^\/(?<num>\d+):(?<command>[a-zA-Z0-9]+)$/g;
+  // /<n>:command (search, id2path, _auth).
+  // Underscore intentionally in the character class: the auth
+  // exchange endpoint is /N:_auth, and an earlier version without `_`
+  // here let it fall through to the standard-form regex which then
+  // bounced every POST /N:_auth back to /0:/ — auth never ran, the
+  // cookie was never set, the modal kept re-firing.
+  const command_reg = /^\/(?<num>\d+):(?<command>[a-zA-Z0-9_]+)$/g;
   const match = command_reg.exec(path);
   if (match) {
     const order = Number(match.groups.num);

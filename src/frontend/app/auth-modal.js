@@ -105,8 +105,14 @@ export function showAuthModal(driveName, driveOrder, onSuccess) {
         method: "POST",
         body: fd,
         credentials: "same-origin",
+        // If routing breaks and the request gets bounced to / →
+        // /0:/, the manual handler below sees the 3xx instead of
+        // following it into a 200 HTML body and reporting "success".
+        redirect: "manual",
       });
-      if (res.ok) {
+      // Only an explicit 200 from /N:_auth counts. A redirect, 5xx,
+      // CORS opaque, etc. all stay in the "try again" state.
+      if (res.status === 200) {
         // Cookie is set — close + let the caller re-run whatever
         // landed on the 401.
         close(onSuccess);
