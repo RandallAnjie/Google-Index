@@ -763,13 +763,15 @@ const JS = `
       const r = await fetchList(path);
       const items = r.data ? r.data.files : (r.files || []);
       renderList(items);
-      // GitHub-style behaviour: if the directory holds a README.md,
+      // GitHub-style behaviour: if the directory holds a README,
       // render it under the file list as a rich preview. Matches
-      // case-insensitively because Drive treats names as case-
-      // sensitive but humans don't ("readme.md" / "Readme.md" all
-      // mean the same thing).
+      // case-insensitively (Drive treats names case-sensitively
+      // but humans don't) and tolerates the common variants —
+      // README / README.md / README.markdown / README.mkd /
+      // README.txt — picking the first hit in listing order.
       const readme = items.find((f) =>
-        f && f.name && f.name.toLowerCase() === "readme.md" &&
+        f && f.name &&
+        /^readme(\.(md|markdown|mkd|txt))?$/i.test(f.name) &&
         f.mimeType !== "application/vnd.google-apps.folder"
       );
       if (readme) renderReadme(readme, path);
