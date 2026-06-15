@@ -8,12 +8,12 @@ export const init = (typeof window !== "undefined" && window.__INIT__) ||
   { driveOrder: 0, isSearchPage: false, initialQuery: "" };
 export const names = (typeof window !== "undefined" && window.__DRIVE_NAMES__) || ["Drive"];
 
-/** The currently selected drive index. Sourced from the drive selector
- *  if present (so the visitor's choice wins) and falls back to the
- *  init value the server stamped in. */
+/** The currently selected drive index. Read from the URL — that's
+ *  the authoritative source now that the toolbar widget is a custom
+ *  picker rather than a native <select> whose value can be read. */
 export function getOrder() {
-  const sel = document.getElementById("drive-select");
-  if (sel && sel.value !== "") return Number(sel.value);
+  const m = location.pathname.match(/^\/(\d+):/);
+  if (m) return Number(m[1]);
   return Number(init.driveOrder || 0);
 }
 

@@ -76,6 +76,90 @@ body {
 .brand select:focus {
   outline: none; border-bottom-color: var(--accent); color: var(--ink);
 }
+
+/* Custom drive picker — replaces the native <select> in multi-drive
+   setups so the toolbar reads as one consistent piece of paper. */
+.drive-picker { position: relative; display: inline-block; }
+.drive-trigger {
+  background: transparent; border: none;
+  border-bottom: 1px dashed var(--rule);
+  padding: 2px 0;
+  font-family: inherit; font-size: 0.88rem;
+  color: var(--ink-sub); cursor: pointer;
+  display: inline-flex; align-items: baseline; gap: 6px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.drive-trigger:hover,
+.drive-picker.open .drive-trigger {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+.drive-trigger .drive-arrow {
+  font-size: 0.7em;
+  color: var(--ink-sub);
+  transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.3, 1), color 0.15s;
+}
+.drive-picker.open .drive-arrow {
+  transform: rotate(180deg);
+  color: var(--accent);
+}
+
+.drive-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  min-width: 200px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.10),
+    0 2px 6px rgba(0, 0, 0, 0.05);
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+  transition:
+    opacity 0.18s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.22s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.drive-picker.open .drive-menu {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.drive-item {
+  padding: 7px 12px 7px 14px;
+  border-radius: 6px;
+  font-size: 0.88rem;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex; align-items: center;
+  position: relative;
+  transition: background 0.12s, color 0.12s, padding 0.15s;
+  outline: none;
+}
+.drive-item:hover, .drive-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding-left: 18px;
+}
+.drive-item.selected {
+  font-weight: 500;
+  color: var(--accent);
+}
+.drive-item.selected::after {
+  content: "✓";
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 0.85em;
+  color: var(--accent);
+}
 #search-form { flex: 1; min-width: 200px; max-width: 320px; }
 #search-input {
   width: 100%; padding: 8px 16px;

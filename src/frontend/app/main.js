@@ -7,6 +7,7 @@ import { ui, init, names, getOrder, pathBase } from "./state.js";
 import { navigateTo, installPopstate } from "./nav.js";
 import { bootList } from "./list.js";
 import { bootSearch } from "./search.js";
+import { buildDrivePicker } from "./drive-picker.js";
 
 const root = document.documentElement;
 
@@ -18,19 +19,18 @@ const stored = localStorage.getItem("goindex-theme");
 if (stored === "dark" || stored === "light") root.setAttribute("data-theme", stored);
 if (ui.accent) root.style.setProperty("--accent", ui.accent);
 
-// Drive selector — only render options when there's more than one.
+// Drive selector — replace the native <select> with a custom picker
+// that matches the rest of the toolbar's paper-feel. Single-drive
+// setups just hide the control entirely.
 const select = document.getElementById("drive-select");
-names.forEach((n, i) => {
-  const opt = document.createElement("option");
-  opt.value = i;
-  opt.textContent = n;
-  select.appendChild(opt);
-});
-if (names.length < 2) select.style.display = "none";
-select.value = String(init.driveOrder);
-select.addEventListener("change", () => {
-  location.href = "/" + select.value + ":/";
-});
+if (names.length < 2) {
+  select.style.display = "none";
+} else {
+  const picker = buildDrivePicker(names, init.driveOrder, (i) => {
+    location.href = "/" + i + ":/";
+  });
+  select.replaceWith(picker);
+}
 
 document.getElementById("theme-toggle").addEventListener("click", () => {
   const cur = root.getAttribute("data-theme") ||
