@@ -569,6 +569,19 @@ body {
 .list li .name .desc {
   color: var(--ink-sub); font-style: italic;
   font-weight: normal; font-size: 0.88em;
+  display: inline-block;
+}
+/* When applyRconf injects a desc tag after the list is already on
+   screen, mark it .entering so it slides in from the left rather
+   than just popping into existence next to the filename. */
+.list li .name .desc.entering {
+  opacity: 0; transform: translateX(-10px);
+  animation: descIn 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation-delay: 0.5s;
+}
+@keyframes descIn {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: none; }
 }
 .list li.pinned .name::before {
   content: ""; display: inline-block;
@@ -583,7 +596,43 @@ body {
   margin: 18px 0 22px;
   padding-bottom: 18px;
   border-bottom: 1px dashed var(--rule);
-  animation: fadeIn 0.4s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+/* When rconfig.json lands the header is inserted with .entering.
+   The block expands its own height (pushing the list down with a
+   matching easing) while its inner content stays hidden, then the
+   inner content slides in from the left 0.5s later. */
+.dir-header.entering {
+  overflow: hidden;
+  animation: dhSlideDown 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@keyframes dhSlideDown {
+  from {
+    max-height: 0;
+    margin-top: 0; margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom-width: 0;
+    opacity: 0;
+  }
+  to {
+    max-height: 500px;
+    margin-top: 18px; margin-bottom: 22px;
+    padding-bottom: 18px;
+    border-bottom-width: 1px;
+    opacity: 1;
+  }
+}
+.dir-header.entering > * {
+  opacity: 0; transform: translateX(-14px);
+  animation: dhContentIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation-delay: 0.5s;
+}
+.dir-header.entering .dir-cover { animation-delay: 0.50s; }
+.dir-header.entering .dir-title { animation-delay: 0.58s; }
+.dir-header.entering .dir-intro { animation-delay: 0.66s; }
+.dir-header.entering .dir-links { animation-delay: 0.74s; }
+@keyframes dhContentIn {
+  from { opacity: 0; transform: translateX(-14px); }
+  to   { opacity: 1; transform: none; }
 }
 .dir-cover {
   display: block; width: 100%;
@@ -721,6 +770,9 @@ body {
   margin: 0;
 }
 .modal-body .note { color: var(--ink-sub); font-style: italic; margin: 0; }
+/* Inside the modal we already sit on bg-soft; swap markdown
+   to the deeper bg so the nested card has a visible edge. */
+.modal-body .markdown { background: var(--bg); }
 
 body.modal-open { overflow: hidden; }
 
@@ -1309,18 +1361,18 @@ const JS = `
     actions.appendChild(open);
     body.appendChild(actions);
 
-    if (/^(jpe?g|png|gif|webp|svg|bmp|avif)$/.test(ext)) {
+    if (/^(jpe?g|png|gif|webp|svg|bmp|avif|tiff?)$/.test(ext)) {
       const img = document.createElement("img");
       img.src = inlineUrl;
       img.loading = "lazy";
       body.appendChild(img);
-    } else if (/^(mp4|webm|mkv|mov)$/.test(ext)) {
+    } else if (/^(mp4|webm|mkv|mov|m4v|avi)$/.test(ext)) {
       const v = document.createElement("video");
       v.src = inlineUrl;
       v.controls = true;
       v.playsInline = true;
       body.appendChild(v);
-    } else if (/^(mp3|flac|wav|ogg|m4a|aac|opus)$/.test(ext)) {
+    } else if (/^(mp3|flac|wav|ogg|m4a|aac|opus|ape)$/.test(ext)) {
       const a = document.createElement("audio");
       a.src = inlineUrl;
       a.controls = true;
@@ -1329,18 +1381,53 @@ const JS = `
       const iframe = document.createElement("iframe");
       iframe.src = inlineUrl;
       body.appendChild(iframe);
-    } else if (/^(md|txt|js|ts|py|go|rs|java|c|cpp|sh|yaml|yml|json|html|css|log|toml|ini|conf|rb|php|swift|kt|sql)$/.test(ext)) {
+    } else if (/^(md|markdown|mkd)$/.test(ext)) {
+      // Render markdown inline rather than dumping source — same
+      // pipeline as the per-directory README preview.
+      const md = document.createElement("div");
+      md.className = "markdown";
+      md.textContent = "loading…";
+      body.appendChild(md);
+      fetch(inlineUrl)
+        .then((r) => r.text())
+        .then((t) => {
+          md.textContent = "";
+          md.innerHTML = renderMarkdown(t);
+          const mathNodes = md.querySelectorAll(".math-inline, .math-display");
+          if (mathNodes.length) typesetMath(mathNodes);
+        })
+        .catch(() => { md.textContent = "(failed to load)"; });
+    } else if (/^(docx?|xlsx?|pptx?|odt|ods|odp|pages|numbers|keynote)$/.test(ext)) {
+      // Browser can't preview office docs inline. Show a friendly
+      // hint and keep the Download / Open-in-new-tab actions visible.
+      const note = document.createElement("p");
+      note.className = "note";
+      note.textContent = "Office 文档不支持内嵌预览,使用上方 Download 或 Open in new tab。";
+      body.appendChild(note);
+    } else if (/^(zip|tar|gz|tgz|rar|7z|bz2|xz)$/.test(ext)) {
+      const note = document.createElement("p");
+      note.className = "note";
+      note.textContent = "压缩包无法在线打开,请下载后查看内容。";
+      body.appendChild(note);
+    } else if (/^(txt|log|js|mjs|ts|tsx|jsx|py|go|rs|java|c|h|cpp|hpp|sh|bash|zsh|yaml|yml|json|toml|html|htm|css|scss|vue|svelte|rb|php|swift|kt|sql|ini|conf|env|gitignore|dockerfile)$/.test(ext)) {
+      // Code / plain text — wrap in <pre><code class="language-xx">
+      // so a future highlighter can pick it up; for now we just
+      // benefit from the mono font + sized container styling.
       const pre = document.createElement("pre");
-      pre.textContent = "loading…";
+      const code = document.createElement("code");
+      const langClass = ext.replace(/[^a-zA-Z0-9_+-]/g, "");
+      if (langClass) code.className = "language-" + langClass;
+      code.textContent = "loading…";
+      pre.appendChild(code);
       body.appendChild(pre);
       fetch(inlineUrl)
         .then((r) => r.text())
-        .then((t) => { pre.textContent = t; })
-        .catch(() => { pre.textContent = "(failed to load)"; });
+        .then((t) => { code.textContent = t; })
+        .catch(() => { code.textContent = "(failed to load)"; });
     } else {
       const note = document.createElement("p");
       note.className = "note";
-      note.textContent = "no inline preview for this file type";
+      note.textContent = "此类型暂不支持在线预览,可下载后查看。";
       body.appendChild(note);
     }
     modal.appendChild(body);
@@ -1441,10 +1528,12 @@ const JS = `
       document.documentElement.style.setProperty("--accent", rconf.accent);
     }
     // dir-header goes above the file list (or above the README if
-    // somehow the list isn't there yet).
+    // somehow the list isn't there yet). .entering triggers the
+    // slide-down + delayed left-to-right reveal of inner content.
     const header = renderDirHeader(rconf);
     const ul = content.querySelector(".list");
     if (header) {
+      header.classList.add("entering");
       if (ul) content.insertBefore(header, ul);
       else content.prepend(header);
     }
@@ -1468,7 +1557,8 @@ const JS = `
 
     // Description annotations. Skip if the row already has one
     // (shouldn't happen since renderList doesn't add them anymore,
-    // but cheap to guard).
+    // but cheap to guard). .entering triggers the left-to-right
+    // slide-in coordinated with the dir-header reveal.
     Object.keys(rconf.desc).forEach((rawKey) => {
       const li = lookup(rawKey);
       const val = rconf.desc[rawKey];
@@ -1476,7 +1566,7 @@ const JS = `
       const nameEl = li.querySelector(".name");
       if (!nameEl || nameEl.querySelector(".desc")) return;
       const tag = document.createElement("small");
-      tag.className = "desc";
+      tag.className = "desc entering";
       tag.textContent = " · " + String(val);
       nameEl.appendChild(tag);
     });
