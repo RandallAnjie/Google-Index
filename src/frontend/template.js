@@ -23,6 +23,11 @@ export function renderShell(authConfig, uiConfig, current_drive_order = 0, model
     driveOrder: current_drive_order,
     isSearchPage: !!model.is_search_page,
     initialQuery: model.q || "",
+    // Whether the current root has an auth map at all. The frontend
+    // uses this to gate write-side UI (upload button); the backend
+    // enforces the same policy in router.js, so this is purely a
+    // "don't dangle a button that will 403 anyway" courtesy.
+    rootHasAuth: !!(authConfig.roots[current_drive_order] && authConfig.roots[current_drive_order].auth),
   });
   return `<!DOCTYPE html>
 <html lang="en">

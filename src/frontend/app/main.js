@@ -66,13 +66,14 @@ document.getElementById("breadcrumb").addEventListener("click", (e) => {
 
 installPopstate();
 
-// Upload — only meaningful on listing pages (search results don't
-// have a "current directory" to upload into). Click on the toolbar
-// button pops the hidden file input; once a file lands the upload
-// modal takes over and refreshes the listing on success.
+// Upload button: only show on listing pages of roots that have an
+// auth map configured. Search pages don't have a "current dir" to
+// write into; public roots aren't allowed to receive uploads at all
+// (the backend enforces the same policy, this is just so we don't
+// dangle a button that would 403).
 const uploadBtn = document.getElementById("upload-btn");
 const uploadInput = document.getElementById("upload-input");
-if (init.isSearchPage) {
+if (init.isSearchPage || !init.rootHasAuth) {
   uploadBtn.hidden = true;
 } else {
   uploadBtn.addEventListener("click", () => uploadInput.click());

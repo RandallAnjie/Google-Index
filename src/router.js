@@ -102,6 +102,19 @@ export async function handleRequest(request, config) {
       return handleId2Path(request, gd);
     }
     if (command === "_upload" && request.method === "POST") {
+      // Extra gate on top of basicAuthResponse: writes require auth
+      // to be *configured* on the root, not just "happens to pass".
+      // basicAuthResponse short-circuits to null when root.auth is
+      // unset, which is the right policy for read-only listings (no
+      // creds expected, no creds required) but the wrong policy for
+      // writes — without this check a public root would let any
+      // visitor upload arbitrary files into the operator's Drive.
+      if (!gd.root.auth) {
+        return new Response(
+          '{"success":false,"message":"该 root 未启用鉴权,不允许上传"}',
+          { status: 403, headers: { "Content-Type": "application/json; charset=utf-8" } },
+        );
+      }
       return handleUpload(request, gd);
     }
   }
