@@ -43,8 +43,18 @@ export async function handleRequest(request, config) {
   // etc.): the request reaches the worker as http://… so url.origin
   // is "http://host", and the visitor's browser blocks the redirect
   // as mixed content when the page itself was loaded over HTTPS.
+  //
+  // 302 + Cache-Control: no-store on purpose. The earlier build
+  // emitted a 301 with an http:// Location, and browsers cache 301s
+  // forever (so does any CDN in front of us) — visitors who hit the
+  // bad version saw the broken redirect re-served from cache long
+  // after the worker stopped producing it. Marking this temporary
+  // and uncacheable keeps that footgun from re-arming.
   const redirectToIndexPage = () =>
-    new Response("", { status: 301, headers: { Location: "/0:/" } });
+    new Response("", {
+      status: 302,
+      headers: { Location: "/0:/", "Cache-Control": "no-store" },
+    });
 
   if (path === "/") return redirectToIndexPage();
   if (path.toLowerCase() === "/favicon.ico") return new Response("", { status: 404 });
