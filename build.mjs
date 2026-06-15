@@ -61,13 +61,18 @@ const cssAsText = {
 };
 
 async function buildWorker(frontendCode) {
+  // Output filename is "_worker.js" because Cloudflare Pages / the
+  // RandallFlare equivalent treat that name as the Advanced-Mode
+  // Module Worker entry inside the output dir. Anything else (e.g.
+  // dist/index.js) is served as a static asset, which is why the
+  // path "/" was returning 404 — the router never ran.
   return esbuild.build({
     entryPoints: ['src/index.js'],
     bundle: true,
     format: 'esm',
     platform: 'neutral',
     target: 'es2022',
-    outfile: 'dist/index.js',
+    outfile: 'dist/_worker.js',
     legalComments: 'none',
     logLevel: 'info',
     plugins: [injectFrontend(() => frontendCode), cssAsText],
@@ -78,7 +83,7 @@ async function buildOnce() {
   const start = Date.now();
   const frontendCode = await buildFrontend();
   await buildWorker(frontendCode);
-  console.log(`✓ built dist/index.js in ${Date.now() - start}ms (frontend ${frontendCode.length}B)`);
+  console.log(`✓ built dist/_worker.js in ${Date.now() - start}ms (frontend ${frontendCode.length}B)`);
 }
 
 if (watchMode) {

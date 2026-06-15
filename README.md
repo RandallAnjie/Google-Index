@@ -85,9 +85,9 @@ legacy/index.legacy.js     # 原始单文件版,留作参考
 
 1. 在你的 RandallFlare 控制台创建一个 Workers / Pages 项目。
 2. 把 Git 源指向本仓库(或你的 fork)。
-3. **Build command** 设为 `npm run build`,**output dir** 设为 `dist`。
+3. **Build command** 设为 `npm run build`,**output dir** 设为 `dist`。构建产物是 `dist/_worker.js` —— Pages / RandallFlare 看到 output dir 根有这个文件名就会按 Advanced-Mode Module Worker 跑,而不是当成静态资源。
 4. 按下面的表格填运行时 env 绑定(面板里的 **runtime env vars**)。
-5. 保存。下次 push 时 RandallFlare 跑 `npm install` → `npm run build` → 把 `dist/index.js` 发布成 Worker。
+5. 保存。下次 push 时 RandallFlare 跑 `npm ci` → `npm run build` → 把 `dist/_worker.js` 发布成 Worker。
 
 本地开发 / 本地构建:
 
