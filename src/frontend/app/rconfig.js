@@ -136,26 +136,88 @@ export function applyRconf(rconf, content) {
   });
 
   // Pinned: mark + reorder. Moving an <li> within the same parent
-  // doesn't re-trigger its entrance animation, so no flicker.
+  // is otherwise a hard jump — wrap the mutation in FLIP so each row
+  // slides from its old position to its new one over ~450ms.
   if (rconf.pinned.length) {
     const order = rconf.pinned.map((k) => k.replace(/\/$/, ""));
     order.forEach((name) => {
       const li = byName.get(name);
       if (li) li.classList.add("pinned");
     });
-    const allLis = Array.from(ul.children);
-    allLis.sort((a, b) => {
-      const an = a.dataset && a.dataset.name;
-      const bn = b.dataset && b.dataset.name;
-      const ai = order.indexOf(an);
-      const bi = order.indexOf(bn);
-      if (ai >= 0 && bi >= 0) return ai - bi;
-      if (ai >= 0) return -1;
-      if (bi >= 0) return 1;
-      return 0; // preserve original folders-first ordering for the rest
+    flipReorder(ul, () => {
+      const allLis = Array.from(ul.children);
+      allLis.sort((a, b) => {
+        const an = a.dataset && a.dataset.name;
+        const bn = b.dataset && b.dataset.name;
+        const ai = order.indexOf(an);
+        const bi = order.indexOf(bn);
+        if (ai >= 0 && bi >= 0) return ai - bi;
+        if (ai >= 0) return -1;
+        if (bi >= 0) return 1;
+        return 0; // preserve original folders-first ordering for the rest
+      });
+      // appendChild on an existing node moves it without dropping
+      // listeners — and FLIP will animate the visual delta below.
+      allLis.forEach((li) => ul.appendChild(li));
     });
-    // Re-attach in sorted order. appendChild on an existing node
-    // moves it without dropping listeners.
-    allLis.forEach((li) => ul.appendChild(li));
   }
+}
+
+/**
+ * FLIP (First / Last / Invert / Play) reorder animation.
+ *
+ * 1. Snapshot every child's bounding box (First).
+ * 2. Run the caller's mutate() — the DOM ends up in its final order.
+ * 3. Read each child's new box (Last).
+ * 4. Apply an instant transform that places each child back at its
+ *    old visual position (Invert).
+ * 5. On the next frame, remove the transform with a transition →
+ *    each row slides smoothly to its real position (Play).
+ *
+ * Rows whose visual position didn't change skip the transform pass
+ * entirely, so an "everything's already in order" call is free.
+ */
+function flipReorder(parent, mutate) {
+  const children = Array.from(parent.children);
+  const first = new Map();
+  children.forEach((c) => first.set(c, c.getBoundingClientRect()));
+
+  mutate();
+
+  const moved = [];
+  children.forEach((c) => {
+    const f = first.get(c);
+    const l = c.getBoundingClientRect();
+    const dx = f.left - l.left;
+    const dy = f.top - l.top;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+    // Snap to the old position with no animation, then drop the
+    // transform on the next frame under a transition.
+    c.style.transition = "none";
+    c.style.transform = "translate(" + dx + "px, " + dy + "px)";
+    // CSS animation-delay on .list li is per-row (entrance stagger),
+    // but transform transition is separate so we set it explicitly
+    // when we Play.
+    moved.push(c);
+  });
+  if (moved.length === 0) return;
+
+  // One forced reflow so the browser commits the inverted state
+  // before we hand it the target state under a transition.
+  void parent.offsetWidth;
+
+  requestAnimationFrame(() => {
+    moved.forEach((c) => {
+      c.style.transition = "transform 0.45s cubic-bezier(0.2, 0.7, 0.3, 1)";
+      c.style.transform = "";
+    });
+    // Clear inline transition + transform once the animation is
+    // done, so subsequent hover / focus styles aren't affected.
+    setTimeout(() => {
+      moved.forEach((c) => {
+        c.style.transition = "";
+        c.style.transform = "";
+      });
+    }, 500);
+  });
 }
