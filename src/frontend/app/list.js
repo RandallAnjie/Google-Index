@@ -2,7 +2,7 @@
 // what every SPA navigation, popstate, and initial load lands on:
 // breadcrumb → skeleton (delayed) → list → README → applyRconf.
 
-import { ui, currentPath, pathBase } from "./state.js";
+import { ui, names, getOrder, currentPath, pathBase } from "./state.js";
 import { iconFor } from "./icons.js";
 import { fmtSize, fmtDate } from "./format.js";
 import { renderBreadcrumb } from "./breadcrumb.js";
@@ -11,6 +11,7 @@ import { navigateTo } from "./nav.js";
 import { openPreview } from "./preview.js";
 import { renderMarkdown, typesetMath, renderMermaid } from "./markdown.js";
 import { readRconf, applyRconf } from "./rconfig.js";
+import { showAuthModal } from "./auth-modal.js";
 
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 
@@ -20,6 +21,13 @@ export async function fetchList(path, pageToken, pageIndex) {
   if (pageToken) fd.append("page_token", pageToken);
   fd.append("page_index", String(pageIndex || 0));
   const res = await fetch(pathBase() + path, { method: "POST", body: fd });
+  if (res.status === 401) {
+    // Caller handles this — opens the custom auth modal and retries
+    // after the cookie lands.
+    const err = new Error("unauthorized");
+    err.status = 401;
+    throw err;
+  }
   if (!res.ok) throw new Error("list " + res.status);
   return res.json();
 }
@@ -166,6 +174,14 @@ export async function bootList() {
     }
   } catch (e) {
     clearTimeout(skelTimer);
+    if (e && e.status === 401) {
+      // Drive requires a login. The auth modal handles the credential
+      // exchange; once the cookie is set we just re-enter bootList.
+      content.innerHTML = "";
+      const driveName = names[getOrder()] || "Drive";
+      showAuthModal(driveName, getOrder(), () => bootList());
+      return;
+    }
     content.innerHTML = '<div class="error">failed to load — ' + e.message + '</div>';
   }
 }

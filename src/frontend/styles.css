@@ -501,6 +501,67 @@ body {
 
 body.modal-open { overflow: hidden; }
 
+/* Custom auth modal — drops the browser's native Basic Auth popup
+   in favour of a card that matches the rest of the UI. */
+.auth-modal { width: min(420px, 100%); }
+.auth-modal .modal-head h2 { font-size: 1.05rem; }
+.auth-body { padding: 22px 26px 26px; }
+.auth-subtitle {
+  margin: 0 0 18px;
+  color: var(--ink-sub);
+  font-family: var(--serif);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+.auth-form { display: flex; flex-direction: column; gap: 14px; }
+.auth-field { display: flex; flex-direction: column; gap: 5px; }
+.auth-field > span {
+  font-size: 0.78rem;
+  color: var(--ink-sub);
+  letter-spacing: 0.02em;
+}
+.auth-field > input {
+  width: 100%;
+  padding: 9px 14px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.auth-field > input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.auth-error {
+  font-size: 0.85rem;
+  color: #c0392b;
+  background: rgba(192, 57, 43, 0.07);
+  border: 1px solid rgba(192, 57, 43, 0.22);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 0;
+  animation: fadeIn 0.2s ease-out;
+}
+.auth-submit {
+  margin-top: 4px;
+  width: 100%;
+  padding: 10px 18px;
+  background: var(--ink);
+  color: var(--bg);
+  border: none;
+  border-radius: 999px;
+  font-size: 0.92rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.12s, opacity 0.15s, background 0.15s;
+}
+.auth-submit:hover:not(:disabled) { transform: translateY(-1px); }
+.auth-submit:disabled { opacity: 0.55; cursor: progress; }
+
 /* markdown — essay-like */
 .markdown {
   background: var(--bg-soft);

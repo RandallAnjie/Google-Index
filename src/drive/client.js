@@ -52,21 +52,43 @@ export class googleDrive {
 
   basicAuthResponse(request) {
     const auth = this.root.auth || "";
-    const _401 = new Response("unauthorized", {
-      headers: {
-        "WWW-Authenticate": `Basic realm="goindex:drive:${this.order}"`,
-        "content-type": "text/html;charset=UTF-8",
-      },
+    if (!auth) return null;
+    // NOTE: we deliberately do NOT emit a WWW-Authenticate header.
+    // That header is what triggers the browser's built-in username /
+    // password dialog, which looks nothing like the rest of the UI.
+    // The frontend catches plain 401 responses from the listing /
+    // search / id2path endpoints and opens its own modal instead.
+    const _401 = new Response('{"error":{"code":401,"message":"unauthorized"}}', {
+      headers: { "content-type": "application/json; charset=utf-8" },
       status: 401,
     });
-    if (!auth) return null;
-    const header = request.headers.get("Authorization");
-    if (!header) return _401;
-    try {
-      const decoded = atob(header.split(" ")[1] || "");
-      const [user, pass] = decoded.split(":");
-      if (auth[user] !== undefined && String(auth[user]) === pass) return null;
-    } catch { /* fall through */ }
+
+    // Two ways to present credentials: a goindex-auth-<order> cookie
+    // (set by the custom auth modal via POST /N:_auth) or the legacy
+    // Authorization: Basic header (still honoured for curl / API
+    // clients). Cookie is checked first because the modal flow is
+    // the new default.
+    const cookieHeader = request.headers.get("Cookie") || "";
+    const cookieRe = new RegExp("(?:^|; )goindex-auth-" + this.order + "=([^;]+)");
+    const cookieMatch = cookieHeader.match(cookieRe);
+    let creds = null;
+    if (cookieMatch) {
+      try { creds = atob(decodeURIComponent(cookieMatch[1])); } catch (_) { /* malformed */ }
+    }
+    if (!creds) {
+      const header = request.headers.get("Authorization");
+      if (header) {
+        try { creds = atob(header.split(" ")[1] || ""); } catch (_) { /* malformed */ }
+      }
+    }
+    if (creds) {
+      const sep = creds.indexOf(":");
+      if (sep > 0) {
+        const user = creds.slice(0, sep);
+        const pass = creds.slice(sep + 1);
+        if (auth[user] !== undefined && String(auth[user]) === pass) return null;
+      }
+    }
     return _401;
   }
 

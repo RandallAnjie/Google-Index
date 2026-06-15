@@ -4,6 +4,7 @@
 
 import { init, names, getOrder, pathBase } from "./state.js";
 import { renderList } from "./list.js";
+import { showAuthModal } from "./auth-modal.js";
 
 async function fetchSearch(q, pageToken, pageIndex) {
   const fd = new FormData();
@@ -11,6 +12,11 @@ async function fetchSearch(q, pageToken, pageIndex) {
   if (pageToken) fd.append("page_token", pageToken);
   fd.append("page_index", String(pageIndex || 0));
   const res = await fetch(pathBase() + "search", { method: "POST", body: fd });
+  if (res.status === 401) {
+    const err = new Error("unauthorized");
+    err.status = 401;
+    throw err;
+  }
   if (!res.ok) throw new Error("search " + res.status);
   return res.json();
 }
@@ -35,6 +41,12 @@ export async function bootSearch() {
     }));
     renderList(files, { searchMode: true });
   } catch (e) {
+    if (e && e.status === 401) {
+      document.getElementById("content").innerHTML = "";
+      const driveName = names[getOrder()] || "Drive";
+      showAuthModal(driveName, getOrder(), () => bootSearch());
+      return;
+    }
     document.getElementById("content").innerHTML =
       '<div class="error">search failed — ' + e.message + '</div>';
   }

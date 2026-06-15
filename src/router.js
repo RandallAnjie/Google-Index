@@ -20,6 +20,7 @@ import { renderShell } from "./frontend/template.js";
 import { apiRequest } from "./handlers/list.js";
 import { handleSearch } from "./handlers/search.js";
 import { handleId2Path } from "./handlers/id2path.js";
+import { handleAuth } from "./handlers/auth.js";
 
 const state = { gds: [] };
 
@@ -50,11 +51,16 @@ export async function handleRequest(request, config) {
     let gd;
     if (order >= 0 && order < gds.length) gd = gds[order];
     else return redirectToIndexPage();
-    const basic_auth_res = gd.basicAuthResponse(request);
-    if (basic_auth_res) return basic_auth_res;
     const command = match.groups.command;
-    if (command === "search") {
-      if (request.method === "POST") return handleSearch(request, gd);
+    // _auth is the credential-exchange endpoint. We intentionally
+    // skip the basicAuthResponse() gate here — the visitor doesn't
+    // have a cookie yet, that's why they're hitting this URL.
+    if (command === "_auth" && request.method === "POST") {
+      return handleAuth(request, gd);
+    }
+    // Search HTML shell is always served — the client JS handles the
+    // login modal if the search POST comes back 401.
+    if (command === "search" && request.method !== "POST") {
       const params = url.searchParams;
       return new Response(
         renderShell(authConfig, uiConfig, gd.order, {
@@ -65,6 +71,11 @@ export async function handleRequest(request, config) {
         { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } },
       );
     }
+    // POST endpoints (search, id2path) gated by the cookie / header
+    // basic-auth check.
+    const basic_auth_res = gd.basicAuthResponse(request);
+    if (basic_auth_res) return basic_auth_res;
+    if (command === "search") return handleSearch(request, gd);
     if (command === "id2path" && request.method === "POST") {
       return handleId2Path(request, gd);
     }
@@ -90,13 +101,13 @@ export async function handleRequest(request, config) {
   }
   const action = url.searchParams.get("a");
   if (path.substr(-1) === "/" || action != null) {
-    return (
-      basic_auth_res ||
-      new Response(renderShell(authConfig, uiConfig, gd.order, { root_type: gd.root_type }), {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      })
-    );
+    // HTML shell is always served, even when auth is required —
+    // the client-side modal asks for credentials after detecting
+    // 401 on the listing fetch.
+    return new Response(renderShell(authConfig, uiConfig, gd.order, { root_type: gd.root_type }), {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
   }
   if (path.split("/").pop().toLowerCase() === ".password") {
     return basic_auth_res || new Response("", { status: 404 });
