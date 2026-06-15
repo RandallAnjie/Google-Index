@@ -9,9 +9,11 @@
     "build:watch": "node build.mjs --watch",
     "verify": "node build.mjs && node -e \"import('acorn').then(a=>a.parse(require('fs').readFileSync('dist/index.js','utf8'),{ecmaVersion:2022,sourceType:'module'}))\""
   },
-  "devDependencies": {
-    "acorn": "^8.12.1",
+  "dependencies": {
     "esbuild": "^0.28.1"
+  },
+  "devDependencies": {
+    "acorn": "^8.12.1"
   },
   "engines": {
     "node": ">=18"
