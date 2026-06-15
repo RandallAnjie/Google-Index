@@ -25,6 +25,44 @@ const HTML_BLOCK_OPEN = /^<(details|summary|div|table|tbody|thead|tr|td|th|figur
  *  rewrite it. We don't want them dropping <script> / onerror / etc.
  *  on visitors. iframe / object / embed are also stripped on
  *  principle since they can frame external surfaces. */
+/** Render a <details>…</details> block:
+ *  - The <summary> stays HTML but its text gets the inline-markdown
+ *    pass (so `**bold**`, `` `code` `` etc. work inside the title).
+ *  - Everything between </summary> and </details> is fed back through
+ *    renderMarkdown so lists / fences / paragraphs / headings render.
+ *  - When there's no <summary>, a neutral default is supplied.
+ *  - Falls back to the raw sanitised block if the regex can't find a
+ *    matching closing tag (malformed input). */
+function renderDetailsBlock(raw) {
+  const m = raw.match(/^<details\b([^>]*)>([\s\S]*?)<\/details\s*>/i);
+  if (!m) return sanitizeHtmlBlock(raw);
+  const attrs = sanitizeAttrs(m[1] || "");
+  let inner = m[2];
+  let summaryHtml = "";
+  const sumMatch = inner.match(/<summary\b[^>]*>([\s\S]*?)<\/summary\s*>/i);
+  if (sumMatch) {
+    summaryHtml = inlineMarkdown(sumMatch[1].trim(), null);
+    inner = inner.replace(sumMatch[0], "");
+  } else {
+    summaryHtml = "详情";
+  }
+  const bodyHtml = renderMarkdown(inner.trim());
+  return "<details" + attrs + "><summary>" + summaryHtml + "</summary>" + bodyHtml + "</details>";
+}
+
+/** Strip dangerous attrs (on*, javascript:) but keep the rest of an
+ *  element's opening attribute string intact. Used when we want to
+ *  preserve user-authored class / style / open / data-* but not let
+ *  them ship a <details onmouseover=…>. */
+function sanitizeAttrs(attrs) {
+  return attrs
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
+    .replace(/\son\w+\s*=\s*[^\s>]+/gi, "")
+    .replace(/(href|src)\s*=\s*"\s*javascript:[^"]*"/gi, '$1="#"')
+    .replace(/(href|src)\s*=\s*'\s*javascript:[^']*'/gi, "$1='#'");
+}
+
 function sanitizeHtmlBlock(html) {
   return html
     .replace(/<script\b[\s\S]*?<\/script>/gi, "")
@@ -333,10 +371,15 @@ export function renderMarkdown(src) {
     }
 
     // HTML block — pass through (sanitised) when a line opens with
-    // one of the recognised block-level tags. Collect subsequent
-    // lines until the matching closing tag, or until a blank line if
-    // we never see a close. Single-line snippets work too because
-    // the open + close land on the same line.
+    // one of the recognised block-level tags. Collect lines until
+    // we see the matching closing tag, *not* stopping at blank lines
+    // (otherwise a <details> with a paragraph inside would end
+    // prematurely at the first empty line). Single-line snippets
+    // still work because the open + close land on the same line.
+    //
+    // <details> gets one extra step: its inner content is recursively
+    // run through renderMarkdown so the summary and body can host
+    // list / code-block / heading markdown the way GitHub renders it.
     const htmlOpen = line.match(HTML_BLOCK_OPEN);
     if (htmlOpen) {
       flushPara(); closeListAll(); closeBq();
@@ -346,12 +389,16 @@ export function renderMarkdown(src) {
       let closed = closeRe.test(line);
       let j = i + 1;
       while (!closed && j < lines.length) {
-        if (lines[j] === "") break; // CommonMark style 6 termination
         chunk.push(lines[j]);
         if (closeRe.test(lines[j])) closed = true;
         j++;
       }
-      out.push(sanitizeHtmlBlock(chunk.join("\n")));
+      const joined = chunk.join("\n");
+      if (tag === "details") {
+        out.push(renderDetailsBlock(joined));
+      } else {
+        out.push(sanitizeHtmlBlock(joined));
+      }
       i = j - 1;
       continue;
     }
