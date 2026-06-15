@@ -356,7 +356,7 @@ function html(current_drive_order = 0, model = {}) {
     initialQuery: model.q || "",
   });
   return `<!DOCTYPE html>
-<html lang="en" data-theme="${uiConfig.darkMode ? "dark" : "light"}">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -413,6 +413,18 @@ const CSS = `
   --ink-sub: #666;
   --rule: #e2e2e2;
   --accent: #5b8def; /* boot fallback; overridden via JS from ACCENT_COLOR env */
+  color-scheme: light dark;
+}
+/* Default: follow the OS unless the visitor has flipped the toggle
+   (which stamps data-theme on <html>). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161616;
+    --bg-sub: #1f1f1f;
+    --ink: #e8e8e8;
+    --ink-sub: #999;
+    --rule: #2a2a2a;
+  }
 }
 [data-theme="dark"] {
   --bg: #161616;
@@ -495,6 +507,13 @@ body {
 .markdown pre { background: var(--bg-sub); padding: 12px; border-radius: 6px; overflow: auto; }
 .markdown pre code { background: none; padding: 0; }
 .markdown a { color: var(--accent); }
+.markdown blockquote { border-left: 3px solid var(--rule); margin: 12px 0; padding: 4px 12px; color: var(--ink-sub); }
+.markdown table { border-collapse: collapse; margin: 12px 0; font-size: 0.92em; max-width: 100%; display: block; overflow-x: auto; }
+.markdown th, .markdown td { border: 1px solid var(--rule); padding: 6px 12px; }
+.markdown thead th { background: var(--bg-sub); font-weight: 600; }
+.markdown tbody tr:nth-child(even) td { background: var(--bg-sub); }
+.markdown .math-display { display: block; overflow-x: auto; padding: 10px 0; text-align: center; }
+.markdown .math-inline { font-family: inherit; }
 .footer { padding: 20px 0; font-size: 0.75rem; color: var(--ink-sub); text-align: center; border-top: 1px solid var(--rule); }
 @media (max-width: 600px) {
   .topbar { padding: 12px 0; }
@@ -512,9 +531,12 @@ const JS = `
   const names = window.__DRIVE_NAMES__ || ["Drive"];
   const init = window.__INIT__ || { driveOrder: 0, isSearchPage: false, initialQuery: "" };
 
-  // Theme override from URL persists across sessions.
+  // Theme default follows OS via prefers-color-scheme. The toggle
+  // stamps an explicit data-theme on <html> and persists to
+  // localStorage so the choice survives reloads, but the visitor
+  // can always wipe localStorage to fall back to the OS.
   const stored = localStorage.getItem("goindex-theme");
-  if (stored) root.setAttribute("data-theme", stored);
+  if (stored === "dark" || stored === "light") root.setAttribute("data-theme", stored);
   if (ui.accent) root.style.setProperty("--accent", ui.accent);
 
   // Drive selector — only render options when there's more than one.
@@ -532,7 +554,9 @@ const JS = `
   });
 
   document.getElementById("theme-toggle").addEventListener("click", () => {
-    const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    const cur = root.getAttribute("data-theme") ||
+      (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const next = cur === "dark" ? "light" : "dark";
     root.setAttribute("data-theme", next);
     localStorage.setItem("goindex-theme", next);
   });
@@ -795,6 +819,40 @@ const JS = `
     box.className = "markdown";
     box.innerHTML = renderMarkdown(text);
     document.getElementById("content").appendChild(box);
+    // Math typesetting is opt-in: only fetch KaTeX from a CDN if the
+    // README actually contains \\$ … \\$ / \\$\\$ … \\$\\$ segments.
+    const mathNodes = box.querySelectorAll(".math-inline, .math-display");
+    if (mathNodes.length) typesetMath(mathNodes);
+  }
+
+  let _katexPromise = null;
+  function loadKatex() {
+    if (_katexPromise) return _katexPromise;
+    _katexPromise = new Promise((res) => {
+      const css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+      document.head.appendChild(css);
+      const js = document.createElement("script");
+      js.src = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js";
+      js.onload = () => res(window.katex || null);
+      js.onerror = () => res(null);
+      document.head.appendChild(js);
+    });
+    return _katexPromise;
+  }
+  async function typesetMath(nodes) {
+    const katex = await loadKatex();
+    if (!katex) return;
+    nodes.forEach((n) => {
+      const tex = n.getAttribute("data-tex") || n.textContent || "";
+      try {
+        katex.render(tex, n, {
+          throwOnError: false,
+          displayMode: n.classList.contains("math-display"),
+        });
+      } catch (e) {}
+    });
   }
 
   /** Minimal Markdown → HTML renderer. Covers headings, fenced
@@ -814,6 +872,14 @@ const JS = `
       .replace(/'/g, "&#39;");
   }
   function inlineMarkdown(s) {
+    // Pull \\$…\\$ math out *before* HTML escape so the TeX source
+    // survives intact (\\<, \\&, \\\\ etc are common in LaTeX).
+    // Placeholder uses a NUL char which can't appear in source.
+    const maths = [];
+    s = s.replace(/\\$([^\\$\\n]+)\\$/g, (_m, tex) => {
+      maths.push(tex);
+      return "\\u0000M" + (maths.length - 1) + "\\u0000";
+    });
     s = escapeHtml(s);
     // Heads up: every backslash here lives inside the outer
     // \`const JS = …\` template literal, and the template parse
@@ -831,17 +897,47 @@ const JS = `
     s = s.replace(/__([^_]+)__/g, "<strong>$1</strong>");
     s = s.replace(/(^|[\\s(])\\*([^*\\s][^*]*[^*\\s]|\\S)\\*/g, "$1<em>$2</em>");
     s = s.replace(/(^|[\\s(])_([^_\\s][^_]*[^_\\s]|\\S)_/g, "$1<em>$2</em>");
+    // Restore math placeholders. data-tex carries the TeX source
+    // so typesetMath() can re-render via KaTeX after the fact.
+    s = s.replace(/\\u0000M(\\d+)\\u0000/g, (_m, i) => {
+      const tex = maths[+i];
+      return '<span class="math-inline" data-tex="' + escapeHtml(tex) + '">' + escapeHtml(tex) + '</span>';
+    });
     return s;
+  }
+  function splitRow(line) {
+    return line.replace(/^\\s*\\|/, "").replace(/\\|\\s*$/, "")
+      .split("|").map((c) => c.trim());
+  }
+  function parseAlign(cell) {
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    if (left) return "left";
+    return "";
+  }
+  function buildTable(header, aligns, rows) {
+    const styleOf = (k) => aligns[k] ? ' style="text-align:' + aligns[k] + '"' : "";
+    const th = header.map((h, k) => "<th" + styleOf(k) + ">" + inlineMarkdown(h) + "</th>").join("");
+    const trs = rows.map((r) => {
+      const tds = r.map((c, k) => "<td" + styleOf(k) + ">" + inlineMarkdown(c) + "</td>").join("");
+      return "<tr>" + tds + "</tr>";
+    }).join("");
+    return "<table><thead><tr>" + th + "</tr></thead><tbody>" + trs + "</tbody></table>";
   }
   function renderMarkdown(src) {
     const out = [];
     let codeBuf = null;
+    let mathBuf = null;
     let listKind = null; // "ul" | "ol" | null
     let inBlockquote = false;
     const closeList = () => { if (listKind) { out.push("</" + listKind + ">"); listKind = null; } };
     const closeBq = () => { if (inBlockquote) { out.push("</blockquote>"); inBlockquote = false; } };
-    for (const raw of src.split("\\n")) {
-      const line = raw.replace(/\\r$/, "");
+    const lines = src.split("\\n").map((l) => l.replace(/\\r$/, ""));
+    const tableDelim = /^\\s*\\|?\\s*:?-{3,}:?\\s*(\\|\\s*:?-{3,}:?\\s*)+\\|?\\s*$/;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       // Code fence (open / close)
       if (line.startsWith("\`\`\`")) {
         if (codeBuf === null) {
@@ -854,6 +950,19 @@ const JS = `
         continue;
       }
       if (codeBuf !== null) { codeBuf.push(line); continue; }
+      // Math block fence ($$)
+      if (line.trim() === "$$") {
+        if (mathBuf === null) {
+          closeList(); closeBq();
+          mathBuf = [];
+        } else {
+          const tex = mathBuf.join("\\n");
+          out.push('<div class="math-display" data-tex="' + escapeHtml(tex) + '">' + escapeHtml(tex) + "</div>");
+          mathBuf = null;
+        }
+        continue;
+      }
+      if (mathBuf !== null) { mathBuf.push(line); continue; }
       // Horizontal rule
       if (/^-{3,}\\s*$/.test(line) || /^\\*{3,}\\s*$/.test(line) || /^_{3,}\\s*$/.test(line)) {
         closeList(); closeBq();
@@ -865,6 +974,24 @@ const JS = `
       if (hm) {
         closeList(); closeBq();
         out.push("<h" + hm[1].length + ">" + inlineMarkdown(hm[2]) + "</h" + hm[1].length + ">");
+        continue;
+      }
+      // GFM table: a pipe-bearing header line followed by a delimiter
+      // row of dashes (and optional alignment colons).
+      if (line.indexOf("|") >= 0 && i + 1 < lines.length && tableDelim.test(lines[i + 1])) {
+        closeList(); closeBq();
+        const header = splitRow(line);
+        const aligns = splitRow(lines[i + 1]).map(parseAlign);
+        const rows = [];
+        let j = i + 2;
+        while (j < lines.length) {
+          const r = lines[j];
+          if (r.trim() === "" || r.indexOf("|") < 0) break;
+          rows.push(splitRow(r));
+          j++;
+        }
+        out.push(buildTable(header, aligns, rows));
+        i = j - 1;
         continue;
       }
       // Blockquote
@@ -895,6 +1022,10 @@ const JS = `
     closeList(); closeBq();
     if (codeBuf !== null) {
       out.push("<pre><code>" + escapeHtml(codeBuf.join("\\n")) + "</code></pre>");
+    }
+    if (mathBuf !== null) {
+      const tex = mathBuf.join("\\n");
+      out.push('<div class="math-display" data-tex="' + escapeHtml(tex) + '">' + escapeHtml(tex) + "</div>");
     }
     return out.join("\\n");
   }
