@@ -566,6 +566,56 @@ body {
 .list li.folder .name { font-weight: 500; color: var(--ink); }
 .list li.folder .icon { color: var(--accent); }
 .list li.file { color: var(--ink); }
+.list li .name .desc {
+  color: var(--ink-sub); font-style: italic;
+  font-weight: normal; font-size: 0.88em;
+}
+.list li.pinned .name::before {
+  content: ""; display: inline-block;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent); margin-right: 7px; vertical-align: middle;
+}
+
+/* Per-directory header block painted from rconfig.json. Only the
+   fields that are set get rendered; if rconfig has none of them the
+   header isn't created at all. */
+.dir-header {
+  margin: 18px 0 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px dashed var(--rule);
+  animation: fadeIn 0.4s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.dir-cover {
+  display: block; width: 100%;
+  max-height: 200px; object-fit: cover;
+  border-radius: 8px; margin-bottom: 14px;
+}
+.dir-title {
+  font-family: var(--serif); font-size: 1.45rem;
+  margin: 0; letter-spacing: -0.01em; color: var(--ink);
+}
+.dir-title::after {
+  content: "."; color: var(--accent); margin-left: 1px;
+}
+.dir-intro {
+  margin: 8px 0 0; color: var(--ink-sub);
+  font-family: var(--serif); font-size: 0.98rem; line-height: 1.6;
+}
+.dir-links {
+  margin-top: 12px;
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.dir-links a {
+  display: inline-block; padding: 4px 12px;
+  font-size: 0.82rem;
+  color: var(--ink-sub); text-decoration: none;
+  border: 1px solid var(--rule); border-radius: 999px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.dir-links a:hover {
+  color: var(--accent); border-color: var(--accent);
+  background: var(--accent-soft);
+}
 
 /* preview */
 .preview {
@@ -979,18 +1029,50 @@ const JS = `
   // Render a file/folder list into #content. Folders go first.
   function renderList(items, opts = {}) {
     const content = document.getElementById("content");
-    content.innerHTML = "";
+    // bootList already cleared #content + painted the dir-header, so
+    // it passes append:true to avoid wiping that work. Search still
+    // calls us without it, so default behaviour stays the same.
+    if (!opts.append) content.innerHTML = "";
     if (!items || items.length === 0) {
-      content.innerHTML = '<div class="empty">empty directory</div>';
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "empty directory";
+      content.appendChild(empty);
       return;
     }
-    const folders = items.filter((f) => f.mimeType === "application/vnd.google-apps.folder");
-    const files = items.filter((f) => f.mimeType !== "application/vnd.google-apps.folder");
+    const isFolder = (f) => f.mimeType === "application/vnd.google-apps.folder";
+    const folders = items.filter(isFolder);
+    const files = items.filter((f) => !isFolder(f));
+    let ordered = [...folders, ...files];
+    const rconf = opts.rconf || null;
+    const descMap = rconf ? rconf.desc : {};
+    const pinned = rconf ? rconf.pinned : [];
+
+    // Pinned ordering: anything listed in rconf.pinned floats to the
+    // top in the order given, then everything else stays in the
+    // folders-first sort. Both \`name\` and \`name/\` keys accepted.
+    if (pinned && pinned.length) {
+      const pinIdx = (f) => {
+        const k = isFolder(f) ? f.name + "/" : f.name;
+        let p = pinned.indexOf(k);
+        if (p < 0) p = pinned.indexOf(f.name);
+        return p;
+      };
+      ordered.sort((a, b) => {
+        const ia = pinIdx(a), ib = pinIdx(b);
+        if (ia >= 0 && ib >= 0) return ia - ib;
+        if (ia >= 0) return -1;
+        if (ib >= 0) return 1;
+        return 0;
+      });
+    }
+
     const ul = document.createElement("ul");
     ul.className = "list";
-    [...folders, ...files].forEach((f, idx) => {
+    ordered.forEach((f, idx) => {
       const li = document.createElement("li");
-      li.className = f.mimeType === "application/vnd.google-apps.folder" ? "folder" : "file";
+      const folder = isFolder(f);
+      li.className = folder ? "folder" : "file";
       // Clamp the stagger index so directories with hundreds of rows
       // don't make the last item wait several seconds for its turn.
       li.style.setProperty("--i", String(Math.min(idx, 18)));
@@ -1000,6 +1082,20 @@ const JS = `
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = f.name;
+      // Per-entry annotation from rconfig.desc. Folder keys may
+      // carry a trailing slash; bare-name match works too.
+      const descKey = folder ? (f.name + "/") : f.name;
+      const annotation = (descMap && (descMap[descKey] || descMap[f.name])) || "";
+      if (annotation) {
+        const tag = document.createElement("small");
+        tag.className = "desc";
+        tag.textContent = " · " + annotation;
+        name.appendChild(tag);
+      }
+      // Pinned marker — small dot rendered via CSS ::after.
+      if (pinned && (pinned.indexOf(descKey) >= 0 || pinned.indexOf(f.name) >= 0)) {
+        li.classList.add("pinned");
+      }
       const size = document.createElement("span");
       size.className = "meta";
       size.textContent = fmtSize(f.size);
@@ -1008,7 +1104,7 @@ const JS = `
       date.textContent = fmtDate(f.modifiedTime);
       li.append(icon, name, size, date);
       li.addEventListener("click", () => {
-        if (f.mimeType === "application/vnd.google-apps.folder") {
+        if (folder) {
           const here = opts.searchMode ? (f.path || "/") : currentPath();
           const next = opts.searchMode ? f.path : here + encodeURIComponent(f.name) + "/";
           navigateTo(pathBase() + next);
@@ -1019,6 +1115,81 @@ const JS = `
       ul.appendChild(li);
     });
     content.appendChild(ul);
+  }
+
+  /** rconfig.json schema (all fields optional, all case-insensitive
+   *  at the top level so \`Desc\` and \`desc\` both work):
+   *
+   *    {
+   *      "title":  "目录大标题",
+   *      "intro":  "一句话简介",
+   *      "cover":  "cover.jpg",            // 显示在目录顶部的封面图
+   *      "accent": "#3b82f6",              // 该目录的强调色覆盖
+   *      "desc":   { "name/": "说明",       // 文件夹 (key 带 /)
+   *                  "file.txt": "说明" }, // 或文件
+   *      "hide":   ["thumbs.db"],          // 额外隐藏的文件名
+   *      "pinned": ["important.md"],       // 置顶顺序
+   *      "links":  [{ "label": "源站", "href": "https://..." }]
+   *    }
+   */
+  function readRconf(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const low = {};
+    for (const k of Object.keys(raw)) low[k.toLowerCase()] = raw[k];
+    const desc = (low.desc && typeof low.desc === "object") ? low.desc : {};
+    return {
+      title:  typeof low.title === "string" ? low.title : "",
+      intro:  typeof low.intro === "string" ? low.intro : (typeof low.subtitle === "string" ? low.subtitle : ""),
+      cover:  typeof low.cover === "string" ? low.cover : "",
+      accent: typeof low.accent === "string" ? low.accent : "",
+      desc:   desc,
+      hide:   Array.isArray(low.hide)   ? low.hide.filter((x) => typeof x === "string") : [],
+      pinned: Array.isArray(low.pinned) ? low.pinned.filter((x) => typeof x === "string") : [],
+      links:  Array.isArray(low.links)  ? low.links.filter((x) => x && typeof x.href === "string") : [],
+    };
+  }
+
+  /** Build the dir-header block (title / intro / cover / external
+   *  links). Returns null if rconf has nothing visible to show. */
+  function renderDirHeader(rconf) {
+    if (!rconf) return null;
+    if (!rconf.title && !rconf.intro && !rconf.cover && rconf.links.length === 0) return null;
+    const sec = document.createElement("section");
+    sec.className = "dir-header";
+    if (rconf.cover) {
+      const img = document.createElement("img");
+      img.src = rconf.cover;
+      img.className = "dir-cover";
+      img.loading = "lazy";
+      img.alt = "";
+      sec.appendChild(img);
+    }
+    if (rconf.title) {
+      const h = document.createElement("h2");
+      h.className = "dir-title";
+      h.textContent = rconf.title;
+      sec.appendChild(h);
+    }
+    if (rconf.intro) {
+      const p = document.createElement("p");
+      p.className = "dir-intro";
+      p.textContent = rconf.intro;
+      sec.appendChild(p);
+    }
+    if (rconf.links.length) {
+      const row = document.createElement("div");
+      row.className = "dir-links";
+      rconf.links.forEach((l) => {
+        const a = document.createElement("a");
+        a.href = l.href;
+        a.textContent = l.label || l.href;
+        a.target = "_blank";
+        a.rel = "noopener";
+        row.appendChild(a);
+      });
+      sec.appendChild(row);
+    }
+    return sec;
   }
 
   // Preview pane — appended below the list, scrolls into view.
@@ -1096,26 +1267,74 @@ const JS = `
   async function bootList() {
     const path = currentPath();
     renderBreadcrumb(path);
-    showSkeleton();
+    const content = document.getElementById("content");
+    // Delay the skeleton so a cached / instant fetch doesn't make
+    // placeholder rows flash for a single frame. If the fetch takes
+    // longer than 200ms we drop in the skeleton; otherwise we never
+    // paint it and the real list replaces the previous view directly.
+    const skelTimer = setTimeout(() => showSkeleton(), 200);
     try {
       const r = await fetchList(path);
       const items = r.data ? r.data.files : (r.files || []);
-      renderList(items);
+      const isFolder = (f) => f.mimeType === "application/vnd.google-apps.folder";
+
       // GitHub-style behaviour: if the directory holds a README,
       // render it under the file list as a rich preview. Matches
       // case-insensitively (Drive treats names case-sensitively
       // but humans don't) and tolerates the common variants —
       // README / README.md / README.markdown / README.mkd /
       // README.txt — picking the first hit in listing order.
-      const readme = items.find((f) =>
+      const readmeEntry = items.find((f) =>
         f && f.name &&
         /^readme(\\.(md|markdown|mkd|txt))?$/i.test(f.name) &&
-        f.mimeType !== "application/vnd.google-apps.folder"
+        !isFolder(f)
       );
-      if (readme) renderReadme(readme, path);
+      // rconfig.json — per-directory config (annotations, hide list,
+      // pinned order, accent override, intro, cover, links). Fetched
+      // inline after the list lands so a missing / 404 file doesn't
+      // delay the listing.
+      const rconfEntry = items.find((f) =>
+        f && f.name && f.name.toLowerCase() === "rconfig.json" && !isFolder(f)
+      );
+      let rconf = null;
+      if (rconfEntry) {
+        try {
+          const url = pathBase() + path + encodeURIComponent(rconfEntry.name) + "?inline=true";
+          const txt = await (await fetch(url)).text();
+          rconf = readRconf(JSON.parse(txt));
+        } catch (_) { /* swallow — bad JSON shouldn't break the listing */ }
+      }
+      clearTimeout(skelTimer);
+
+      // Hide rconfig.json + README itself + anything in rconf.hide
+      // before handing the list off to renderList.
+      const hidden = new Set();
+      if (rconfEntry) hidden.add(rconfEntry.name);
+      if (readmeEntry) hidden.add(readmeEntry.name);
+      if (rconf) rconf.hide.forEach((n) => hidden.add(n));
+      const visible = items.filter((f) => !hidden.has(f.name));
+
+      // One clear point: bootList wipes #content, then this function
+      // appends in order — dir-header → list → README.
+      content.innerHTML = "";
+      // Per-directory accent override (reset to the env accent if
+      // rconf doesn't specify one, so we don't leak the previous
+      // directory's accent into this one).
+      const docRoot = document.documentElement;
+      if (rconf && rconf.accent) {
+        docRoot.style.setProperty("--accent", rconf.accent);
+      } else if (ui.accent) {
+        docRoot.style.setProperty("--accent", ui.accent);
+      } else {
+        docRoot.style.removeProperty("--accent");
+      }
+      const header = renderDirHeader(rconf);
+      if (header) content.appendChild(header);
+      renderList(visible, { append: true, rconf });
+      if (readmeEntry) renderReadme(readmeEntry, path);
     } catch (e) {
-      document.getElementById("content").innerHTML =
-        '<div class="error">failed to load — ' + e.message + '</div>';
+      clearTimeout(skelTimer);
+      content.innerHTML = '<div class="error">failed to load — ' + e.message + '</div>';
     }
   }
 
