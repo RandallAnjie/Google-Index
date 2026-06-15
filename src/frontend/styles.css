@@ -362,6 +362,55 @@ body {
   margin: 0;
 }
 .modal-body .note { color: var(--ink-sub); font-style: italic; margin: 0; }
+
+/* Video sidecar info card — populated from a Kodi-style .nfo file
+   sitting next to the video. The card lives under the video player
+   inside the modal body. */
+.modal-body .video-nfo {
+  margin-top: 18px;
+  padding: 16px 18px;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  animation: fadeIn 0.35s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.modal-body .video-nfo h3 {
+  font-family: var(--serif);
+  font-size: 1.18rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+  color: var(--ink);
+}
+.modal-body .video-nfo .nfo-year {
+  color: var(--ink-sub);
+  font-weight: normal;
+  font-size: 0.92rem;
+  margin-left: 2px;
+}
+.modal-body .video-nfo .nfo-meta {
+  font-size: 0.82rem;
+  color: var(--ink-sub);
+  margin-top: 4px;
+}
+.modal-body .video-nfo .nfo-credit {
+  font-size: 0.86rem;
+  color: var(--ink);
+  margin-top: 6px;
+  line-height: 1.55;
+}
+.modal-body .video-nfo .nfo-credit strong {
+  color: var(--ink-sub);
+  font-weight: 500;
+  margin-right: 8px;
+}
+.modal-body .video-nfo .nfo-plot {
+  margin: 12px 0 0;
+  line-height: 1.7;
+  font-size: 0.93rem;
+  color: var(--ink);
+  font-family: var(--serif);
+}
 /* Inside the modal we already sit on bg-soft; swap markdown
    to the deeper bg so the nested card has a visible edge. */
 .modal-body .markdown { background: var(--bg); }
