@@ -820,7 +820,7 @@ const JS = `
       '<img alt="$1" src="$2" loading="lazy">');
     s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
       '<a href="$2" target="_blank" rel="noopener">$1</a>');
-    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+    s = s.replace(/\`([^\`]+)\`/g, "<code>$1</code>");
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/__([^_]+)__/g, "<strong>$1</strong>");
     s = s.replace(/(^|[\s(])\*([^*\s][^*]*[^*\s]|\S)\*/g, "$1<em>$2</em>");
@@ -837,7 +837,7 @@ const JS = `
     for (const raw of src.split("\n")) {
       const line = raw.replace(/\r$/, "");
       // Code fence (open / close)
-      if (line.startsWith("```")) {
+      if (line.startsWith("\`\`\`")) {
         if (codeBuf === null) {
           closeList(); closeBq();
           codeBuf = [];
